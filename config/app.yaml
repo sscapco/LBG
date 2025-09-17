@@ -1,0 +1,4 @@
+llm_provider: azure_openai
+embedding_provider: azure_openai
+vector_store: lancedb
+store_path: ./gov_db

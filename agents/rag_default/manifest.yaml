@@ -1,0 +1,14 @@
+identity:
+  name: rag_default
+  version: 0.1.0
+entrypoint: agents.rag_default.handler:handle_chat
+io:
+  mode: chat
+prompts:
+  main: "rag_default.txt"
+tools:
+  allow: ["retrieval", "llm", "embeddings"]
+output:
+  mode: none
+ui_hints:
+  show_snippets: true

@@ -1,0 +1,23 @@
+identity:
+  name: governance_router
+  version: 0.1.0
+entrypoint: agents.router.handler:handle
+io:
+  mode: chat
+tools:
+  allow: ["retrieval", "embeddings"]  # router uses embeddings, not LLM
+routing:
+  doi_agent: "agents.doi_steps.handler:handle"
+  rag_agent: "agents.rag_default.handler:handle_chat"
+  descriptor_text: >
+    Questions about the governance "Declaration of Intent" (DOI) for new or
+    changed data products: steps, evidence, reviewers, workflow, exceptions/waivers,
+    naming pre-check, SLAs, catalog updates.
+  keywords:
+    strong: ["declaration of intent","governance checklist","review workflow","evidence","waiver","exception","governance committee","triage","decision log"]
+    weak:   ["SLA","retention","classification","catalog","naming check","submit","approve","approval"]
+    negatives: ["digital object identifier","android intent","device orientation"]
+  thresholds:
+    similarity: 0.40
+    final_score: 0.55
+    stickiness_turns: 5
