@@ -86,7 +86,7 @@ def _route_node(state: ChatState) -> ChatState:
             0.1 * _count_hits(q, a.routing.keywords_weak) -
             0.2 * _count_hits(q, a.routing.keywords_neg)
         )
-        score = 0.6 * sim + kpts
+        score = 0.75 * sim + kpts
 
         thr = a.routing.thresholds or {}
         route_thr = thr.get("route", thr.get("final_score", 0.50))

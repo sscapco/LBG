@@ -1,13 +1,13 @@
 identity:
   name: doi_steps_navigator
-  version: 0.2.1
+  version: 0.2.2
   owner: Data Governance Team
   status: pilot
 
 entrypoint: agents.doi_steps.handler:handle
 
 io:
-  modes: ["chat"]            # chat-only for this agent
+  modes: ["chat"]
 
 labels:
   domain: governance
@@ -16,7 +16,7 @@ labels:
   maturity: pilot
 
 prompts:
-  main: "doi_checklist.txt"  # prompt file lives in the same folder as this manifest
+  main: "doi_checklist.txt"
 
 tools:
   allow: ["retrieval", "llm", "embeddings"]
@@ -27,7 +27,7 @@ policies:
   pii_redaction: standard
 
 output:
-  mode: json_fenced          # agent may include a fenced ```json block
+  mode: json_fenced
   show_json_in_ui: true
 
 ui_hints:
@@ -35,14 +35,30 @@ ui_hints:
 
 routing:
   descriptor_text: >
-    Questions about the governance “Declaration of Intent” (DOI) for new or
-    changed data products: steps, minimum evidence, reviewers and workflow,
-    exceptions/waivers, naming pre-check, SLAs, catalog updates.
+    Questions about the governance Declaration of Intent (DOI): steps, minimum evidence,
+    workflow, triage, approvals, decision logs, exceptions/waivers, naming pre-check, and SLAs.
   keywords:
-    strong: ["declaration of intent","governance checklist","review workflow","evidence","waiver","exception","governance committee","triage","decision log"]
-    weak:   ["SLA","retention","classification","catalog entry","naming check","submit DOI","approve","approval"]
-    negatives: ["digital object identifier","android intent","device orientation"]
+    strong:
+      - "declaration of intent"
+      - "doi steps"
+      - "doi form"
+      - "minimum evidence"
+      - "governance checklist"
+      - "review workflow"
+      - "triage"
+      - "decision log"
+      - "approve"
+      - "approval"
+    weak:
+      - "sla"
+      - "retention"
+      - "classification"
+      - "catalog"
+      - "naming check"
+    negatives:
+      - "digital object identifier"
+      - "android intent"
+      - "device orientation"
   thresholds:
-    similarity: 0.40
-    final_score: 0.55
-    stickiness_turns: 5
+    route: 0.48
+    margin: 0.05

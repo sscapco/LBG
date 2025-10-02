@@ -17,7 +17,7 @@ class AzureOpenAI(LLM):
             messages=[{"role": "user", "content": prompt}],
             max_tokens=4096,
             model=self.deployment,
-            temperature=0.01   
+            temperature=0   
             )
         return res.choices[0].message.content
 

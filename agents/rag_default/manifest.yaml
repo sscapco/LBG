@@ -1,14 +1,30 @@
 identity:
   name: rag_default
-  version: 0.1.0
+  version: 0.1.1
+
 entrypoint: agents.rag_default.handler:handle_chat
+
 io:
-  mode: chat
+  modes: ["chat"]
+
 prompts:
   main: "rag_default.txt"
+
 tools:
   allow: ["retrieval", "llm", "embeddings"]
+
 output:
   mode: none
+
 ui_hints:
   show_snippets: true
+
+routing:
+  descriptor_text: "General questions answered via retrieval-augmented generation across the indexed corpus."
+  keywords:
+    strong: []
+    weak: []
+    negatives: []
+  thresholds:
+    route: 0.60     # make RAG a true fallback
+    margin: 0.05
