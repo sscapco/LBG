@@ -46,6 +46,12 @@ MIRRORING (MANDATORY)
   for that token (avoid duplicates).
 - Every edit in `edits[]` must have a matching `issues[]` entry (same token and reason).
 
+EXPLANATION (MANDATORY)
+- "llm_explnation": 1–2 sentences for a business user.
+- Focus on the BusinessName token: call out plurality/tense/ambiguity/acronym if present and the exact fix.
+- May note: "System IDs unchanged." If connection warnings exist, add "system checks not verified."
+- ≤ 45 words, no lists.
+
 OUTPUT — return ONLY this JSON object (no prose, no markdown):
 {
   "suggested_name": "string",  // same token count & order; id tokens EXACTLY unchanged
@@ -61,7 +67,8 @@ OUTPUT — return ONLY this JSON object (no prose, no markdown):
     {"index": 1, "raw": "SAPClaimsGI", "sub_tokens": ["SAP","Claims","GI"], "labels": ["ambiguity"], "note": "Prefer clearer business term"}
   ],
   "notes": "Kept IDs and token order unchanged.",
-  "confidence": 0.0
+  "confidence": 0.0,
+  "llm_explnation": "string"
 }
 
 RULES

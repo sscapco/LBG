@@ -58,7 +58,8 @@ OUTPUT — return ONLY this JSON object:
     {"index": 2, "raw": "VulnerableCustomers", "sub_tokens": ["Vulnerable","Customers"], "labels": ["plurality"], "note": "Prefer singular"}
   ],
   "notes": "Kept IDs, '360', and token order unchanged.",
-  "confidence": 0.0
+  "confidence": 0.0,
+  "llm_explnation": "string"
 }
 
 RULES

@@ -1,0 +1,105 @@
+# agents/name_checker/manifest.yaml
+
+id: name_checker
+display_name: Naming Checker
+version: 0.1.0
+owner: data-governance
+status: active
+description: >
+  Validates Data Product names (ODP/FDP/CDP) against universal and type-specific rules,
+  provides LLM wording review with suggested edits, and surfaces connection warnings.
+labels: [governance, naming, validation]
+
+interfaces:
+  - tool        # callable via /v1/act
+  - chat        # safe to surface in chat UIs (optional)
+
+entrypoint:
+  module: agents.name_checker.handler
+  function: check_name_both
+
+io:
+  input_schema:
+    type: object
+    required: [name, dp_type]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        description: Candidate Data Product name (dot-separated tokens).
+      dp_type:
+        type: string
+        enum: [ODP, FDP, CDP]
+        description: Data Product type.
+      max_len:
+        type: integer
+        default: 75
+        minimum: 10
+        maximum: 200
+        description: Max allowed name length.
+  output_contract:
+    envelope_version: "1.0"   # universal response envelope
+  streaming: false
+
+capabilities:
+  needs_llm: true
+  needs_embeddings: false
+  model_alias: default          # provider-agnostic model key from config
+  temperature: 0.0
+  max_tokens: 600
+  timeout_s: 20
+
+resources:
+  prompts:
+    generic: prompts/name_checker.txt           # if you keep the generic pass
+    odp:     prompts/name_checker_odp.txt
+    fdp:     prompts/name_checker_fdp.txt
+    cdp:     prompts/name_checker_cdp.txt
+  files:
+    - agents/name_checker/handler.py
+
+routing:
+  enabled: false                # flip to true when you plug into the router
+  activation_rules:
+    keywords:
+      any:
+        - naming
+        - name checker
+        - camelcase
+        - plural
+        - plurality
+        - tense
+        - acronym
+        - ambiguity
+        - ODP
+        - FDP
+        - CDP
+        - ServiceNow
+    regex:
+      - '(?i)\bAL\d{5}\b'      # AppID-like tokens
+      - '(?i)\b(odp|fdp|cdp)\b'
+      - '(?i)name(ing)?\s+rule'
+  semantic_profile:
+    corpus_tag: policies/naming          # LanceDB tag (if/when used)
+    top_k: 3
+  weights:
+    keyword_weight: 0.65
+    semantic_weight: 0.35
+  thresholds:
+    enter_at: 0.72
+    stay_above: 0.68
+    handoff_below: 0.50
+  fallback_agent: rag_default
+
+security:
+  allow_direct_invoke: true     # bypass router when agent is specified
+  pii_redaction: true
+
+telemetry:
+  log_level: INFO
+  emit_debug: true
+
+ops:
+  volumes:
+    store: /store
+    logs: /logs

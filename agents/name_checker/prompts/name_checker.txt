@@ -22,6 +22,13 @@ EXAMPLES (guidance, not hard rules)
 - "Processed"/"Processing" → tense (prefer "Process")
 - "Emissions" → plurality (prefer "Emission")
 
+EXPLANATION (MANDATORY)
+- Include a "llm_explnation" field: 1–2 sentences, friendly and specific.
+- Say the verdict ("valid", "needs changes", or "invalid (structural issues)") and why.
+- If edits are proposed, name the exact tokens and the minimal change (e.g., Customers→Customer, Processed→Process).
+- Do NOT invent connector results; you may mention that connector checks are "not verified" if relevant issues were listed.
+- Keep it ≤ 45 words. No bullet points, no markdown.
+
 OUTPUT — return ONLY this JSON:
 {
   "suggested_name": "string",                       // same token count & order; ids unchanged
@@ -32,5 +39,6 @@ OUTPUT — return ONLY this JSON:
     {"index": 2, "raw": "State", "sub_tokens": ["State"], "labels": ["ambiguity"], "note": "Region vs Status"}
   ],
   "notes": "Kept IDs and token order unchanged.",
-  "confidence": 0.0
+  "confidence": 0.0,
+  "llm_explnation": "string"
 }

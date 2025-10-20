@@ -141,6 +141,7 @@ def llm_review_name(
         "confidence": data.get("confidence", None),
         "verdict": verdict,
         "suggestion": suggested if verdict == "suggest_changes" else None,
+        "llm_explnation": (data.get("llm_explnation") or "").strip()
     }
 
 
@@ -382,7 +383,7 @@ def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, An
 
     data["issues"] = issues
     # ---- end mirror ----
-
+    expl = (data.get("llm_explnation") or "").strip()
     verdict = "suggest_changes" if suggested != name else "no_changes"
     return {
         "input_name": name,
@@ -396,6 +397,7 @@ def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, An
         "confidence": data.get("confidence", None),
         "verdict": verdict,
         "suggestion": suggested if verdict == "suggest_changes" else None,
+        "llm_explnation": expl,
     }
 
 
@@ -513,109 +515,78 @@ def connections_checks_by_type(components: Dict[str, Any], dp_type: str) -> Dict
 
 
 def check_name_both(name: str, dp_type: str, max_len: int = 75) -> Dict[str, Any]:
-    """
-    Run universal + type-specific (non-LLM) + DP-specific LLM + connections (warnings).
-    Returns a merged structure with a synthesized overall verdict.
-    """
-    # 1) Universal (non-LLM) checks
+    dp_type_u = (dp_type or "").upper()
+
+    # 1) Universal checks
     det = validate_dp_name(name, max_len=max_len)
     tokens = det.get("tokens", [t for t in (name or "").split(".") if t])
+    checks = [{"source": "universal", "severity": "block", "rule": "universal", "detail": e}
+              for e in det.get("errors", [])]
 
-    checks: List[Dict[str, Any]] = []
-    # Universal blockers
-    checks.extend(
-        {"source": "universal", "severity": "block", "rule": "universal", "detail": e}
-        for e in det.get("errors", [])
-    )
+    # 2) Type-specific non-LLM (always run)
+    type_fn = {"ODP": validate_odp_nonllm, "FDP": validate_fdp_nonllm, "CDP": validate_cdp_nonllm}.get(dp_type_u)
+    type_res = type_fn(name) if type_fn else {
+        "valid": False, "components": {}, "checks": [{
+            "rule": "TYPE", "status": "fail", "severity": "block",
+            "target": "category", "detail": f"Unknown data product type '{dp_type}'. Expected ODP/FDP/CDP."
+        }], "notes": []
+    }
+    checks += [{**c, "source": c.get("source", "type_nonllm")} for c in type_res.get("checks", [])]
 
-    # 2) Type-specific non-LLM checks (always run)
-    dp_type_u = (dp_type or "").upper()
-    if dp_type_u == "ODP":
-        type_res = validate_odp_nonllm(name)
-    elif dp_type_u == "FDP":
-        type_res = validate_fdp_nonllm(name)
-    elif dp_type_u == "CDP":
-        type_res = validate_cdp_nonllm(name)
+    # 3) LLM reviews (DP-specific is primary; generic optional for wording help)
+    llm_dp = llm_check_by_type(name, dp_type_u, max_len=max_len)        # includes llm_explnation via guard
+    llm_gen = llm_review_name(name=name, max_len=max_len)               # generic; keeps same schema
+    checks += [{"source": "llm", "severity": "info", "rule": i.get("type"),
+                "token": i.get("token"), "detail": i.get("note", "")}
+               for i in (llm_dp.get("issues") or [])]
+
+    # 4) Connections (warnings)
+    conn = connections_checks_by_type(type_res.get("components", {}), dp_type_u)
+    checks += [{"source": "connections", "severity": "info", "system": c.get("system"),
+                "rule": c.get("check"), "target": c.get("target"),
+                "status": c.get("status"), "action": c.get("action")}
+               for c in conn.get("connections_checks", [])]
+
+    # 5) Verdict + suggestion
+    invalid = (not det.get("valid", False)) or (not type_res.get("valid", False))
+    if invalid:
+        verdict, scientific_name = "invalid", None
+        suggestion = llm_dp.get("suggestion")
+        edits = llm_dp.get("edits", [])
     else:
-        type_res = {
-            "valid": False,
-            "components": {},
-            "checks": [{
-                "rule": "TYPE",
-                "status": "fail",
-                "severity": "block",
-                "target": "category",
-                "detail": f"Unknown data product type '{dp_type}'. Expected one of: ODP, FDP, CDP."
-            }],
-            "notes": []
-        }
-
-    for c in type_res.get("checks", []):
-        item = dict(c)
-        item.setdefault("source", "type_nonllm")
-        checks.append(item)
-
-    # 3) DP-specific LLM review (always run; suggestions even if invalid)
-    llm_res = llm_check_by_type(name, dp_type_u, max_len=max_len)
-    if llm_res:
-        for iss in (llm_res.get("issues") or []):
-            checks.append({
-                "source": "llm",
-                "severity": "info",
-                "rule": iss.get("type"),
-                "token": iss.get("token"),
-                "detail": iss.get("note", "")
-            })
-
-    # 4) Connections (warnings-only stubs), based on parsed components
-    conn_res = connections_checks_by_type(type_res.get("components", {}), dp_type_u)
-    for c in conn_res.get("connections_checks", []):
-        checks.append({
-            "source": "connections",
-            "severity": "info",
-            "system": c.get("system"),
-            "rule": c.get("check"),
-            "target": c.get("target"),
-            "status": c.get("status"),
-            "action": c.get("action"),
-        })
-
-    # 5) Overall verdict + suggestion
-    universal_invalid = not det.get("valid", False)
-    type_invalid = not type_res.get("valid", False)
-    has_block_fail = universal_invalid or type_invalid
-
-    if has_block_fail:
-        verdict = "invalid"
-        scientific_name = None
-        # Still surface LLM suggestion + edits to help the user fix wording
-        suggestion = (llm_res or {}).get("suggestion")
-        edits = (llm_res or {}).get("edits", [])
-    else:
-        if llm_res and llm_res.get("suggestion"):
-            verdict = "needs_changes"
-            scientific_name = llm_res.get("suggested_name", name)
-            suggestion = llm_res.get("suggestion")
-            edits = llm_res.get("edits", [])
+        if llm_dp.get("suggestion"):
+            verdict, scientific_name = "needs_changes", llm_dp.get("suggested_name", name)
+            suggestion, edits = llm_dp.get("suggestion"), llm_dp.get("edits", [])
         else:
-            verdict = "valid"
-            scientific_name = name
-            suggestion = None
-            edits = []
+            verdict, scientific_name, suggestion, edits = "valid", name, None, []
+
+    # 6) Friendly explanation (short + combined)
+    dp_expl = (llm_dp or {}).get("llm_explnation") or ""
+    gen_expl = (llm_gen or {}).get("llm_explnation") or ""
+    combined = dp_expl if dp_expl else gen_expl
+    if dp_expl and gen_expl and gen_expl not in dp_expl:
+        combined = f"{dp_expl} {gen_expl}"
+        if len(combined) > 180:  # keep tidy
+            combined = dp_expl
+    if invalid:
+        combined = f"Structurally invalid—{combined or 'Review grammar/IDs and apply suggested wording if provided.'}"
 
     return {
         "input_name": name,
         "type": dp_type_u,
         "tokens": tokens,
-        "deterministic": det,        # universal {valid, errors, tokens}
-        "type_nonllm": type_res,     # per-type {valid, components, checks, notes}
-        "llm_review": llm_res,       # dp-specific LLM result (always attempted)
-        "connections": conn_res,     # warnings-only stubs
+        "deterministic": det,            # universal
+        "type_nonllm": type_res,         # per-type
+        "llm_review": llm_dp,            # DP-specific LLM (with llm_explnation)
+        "llm_review_generic": llm_gen,   # generic LLM (with llm_explnation)
+        "connections": conn,             # warnings
         "overall": {
-            "verdict": verdict,               # invalid | needs_changes | valid
+            "verdict": verdict,                  # invalid | needs_changes | valid
             "scientific_name": scientific_name,
-            "suggestion": suggestion,         # present even if invalid (LLM hint)
-            "checks": checks,                 # combined (universal + type + LLM + connections)
-            "edits": edits                    # from LLM (index/from/to/reason)
+            "suggestion": suggestion,
+            "checks": checks,
+            "edits": edits,
+            "explanation": combined             # friendly one-liner for UI/chat
         }
     }
+

@@ -41,6 +41,13 @@ MIRRORING (MANDATORY)
 - For every label in token_reviews[i].labels, add a corresponding entry in `issues[]` for that token.
 - Every edit in `edits[]` must have a matching `issues[]` entry (same token and reason).
 
+EXPLANATION (MANDATORY)
+- "llm_explnation": 1–2 sentences that summarise issues across hierarchy tokens (Concept/Sub-Concept etc.).
+- Mention the specific token(s) and minimal fixes (singularise, base tense, expand acronyms, avoid generic terms like "Data"/"Record"/"State").
+- If CDM mapping warnings exist, say "taxonomy checks not verified."
+- ≤ 45 words.
+
+
 OUTPUT — return ONLY this JSON object:
 {
   "suggested_name": "string",
@@ -57,7 +64,8 @@ OUTPUT — return ONLY this JSON object:
     {"index": 2, "raw": "Data", "sub_tokens": ["Data"], "labels": ["ambiguity"], "note": "Too generic"}
   ],
   "notes": "Kept token order unchanged.",
-  "confidence": 0.0
+  "confidence": 0.0,
+  "llm_explnation": "string"
 }
 
 RULES

@@ -1,4 +1,4 @@
-
+import os
 import importlib
 import glob
 from pathlib import Path
@@ -6,6 +6,14 @@ from typing import Dict, Any, List
 
 import streamlit as st
 import yaml
+
+# ----------------------------------------
+# Config: pick agent from backend (no UI)
+# ----------------------------------------
+# Default to 'doi_step_navigator' but allow override via env var
+TARGET_AGENT_NAME = os.getenv("AGENT_NAME", "doi_steps").lower()
+AGENTS_ROOT = os.getenv("AGENTS_ROOT", "agents")
+LOGO_PATH = os.getenv("DEMO_LOGO", "assets/client_logo.png")
 
 # -------- Registry / Loading --------
 def load_registry(agents_root: str = "agents") -> List[Dict[str, Any]]:
@@ -25,6 +33,7 @@ def load_registry(agents_root: str = "agents") -> List[Dict[str, Any]]:
     items.sort(key=lambda x: x["name"].lower())
     return items
 
+
 def import_handler(entrypoint: str):
     # "package.module:func" -> callable
     if not entrypoint or ":" not in entrypoint:
@@ -34,51 +43,53 @@ def import_handler(entrypoint: str):
     fn = getattr(mod, func_name)
     return fn
 
+
+def resolve_agent(registry: List[Dict[str, Any]], target_name: str):
+    tx = (target_name or "").lower()
+    for it in registry:
+        names = {it["name"].lower()}
+        # Also allow matching on folder name and identity.name (if differs)
+        names.add(Path(it["manifest_dir"]).name.lower())
+        ident_name = ((it.get("manifest") or {}).get("identity") or {}).get("name")
+        if ident_name:
+            names.add(ident_name.lower())
+        if tx in names:
+            return it
+    return None
+
 # -------- UI Setup --------
-st.set_page_config(page_title="Governance Buddy (Agents)", page_icon="🤖", layout="wide")
-st.title("🤖 Governance Buddy — Agent Chat")
-st.caption("Generic chat UI. Agents decide what panels to show via the universal envelope.")
-st.sidebar.image("assets/client_logo.png", use_container_width=True)
-# Sidebar: agent picker
-registry = load_registry("agents")
+st.set_page_config(page_title="Governance Assistant", page_icon="🤖", layout="wide")
+st.title("Governance Assistance")
+
+# Sidebar: logo only (no agent picker)
+with st.sidebar:
+    try:
+        st.image(LOGO_PATH)
+    except Exception:
+        st.markdown("**Governance**")
+
+# Load registry and select agent from backend
+registry = load_registry(AGENTS_ROOT)
 if not registry:
-    st.sidebar.error("No agents found. Place manifests at agents/*/manifest.yaml")
+    st.error("No agents found. Place manifests at agents/*/manifest.yaml")
     st.stop()
 
-agent_names = [x["name"] for x in registry]
-sel_idx = st.sidebar.selectbox("Agent", list(range(len(agent_names))),
-                               format_func=lambda i: agent_names[i], index=0)
-agent = registry[sel_idx]
-st.sidebar.write(f"**Loaded from:** `{agent['path']}`")
-
-# Optional: show manifest basics
-with st.sidebar.expander("Manifest (summary)", expanded=False):
-    st.json({
-        "identity": agent["manifest"].get("identity"),
-        "entrypoint": agent["entrypoint"],
-        "io": agent["manifest"].get("io"),
-        "ui_hints": agent["manifest"].get("ui_hints"),
-        "tools": agent["manifest"].get("tools"),
-    })
+agent = resolve_agent(registry, TARGET_AGENT_NAME)
+if not agent:
+    st.error(f"Agent '{TARGET_AGENT_NAME}' not found.")
+    st.caption("Available agents: " + ", ".join([x["name"] for x in registry]))
+    st.stop()
 
 # Chat state
 if "turns" not in st.session_state:
     st.session_state.turns = []  # each: {user:str, envelope:dict}
-
-col1, col2 = st.sidebar.columns(2)
-if col1.button("Clear chat"):
-    st.session_state.turns = []
-if col2.button("Reload agents"):
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    st.rerun()
 
 # -------- Render history --------
 for t in st.session_state.turns:
     with st.chat_message("user"):
         st.write(t["user"])
 
-    env = t["envelope"] or {}
+    env = t.get("envelope") or {}
     with st.chat_message("assistant"):
         # 1) main text
         st.markdown(env.get("display_text", ""))
@@ -96,7 +107,7 @@ for t in st.session_state.turns:
                     st.text(content)
 
         # 3) retrieved snippets panel (optional)
-        if "snippets" in env and env["snippets"]:
+        if env.get("snippets"):
             with st.expander("Retrieved snippets", expanded=False):
                 for sn in env["snippets"]:
                     where_bits = []
@@ -106,15 +117,15 @@ for t in st.session_state.turns:
                         where_bits.append(sn["header_path"])
                     where = " | ".join(where_bits)
                     st.markdown(f"**[{sn.get('id', '?')}]** {sn.get('doc_id','')}  _{where}_")
-                    st.write(sn.get("text",""))
+                    st.write(sn.get("text", ""))
 
         # 4) alerts (optional)
         for alert in env.get("alerts", []):
             lvl = (alert.get("level") or "info").lower()
-            msg = alert.get("text","")
+            msg = alert.get("text", "")
             if lvl == "error":
                 st.error(msg)
-            elif lvl in ("warn","warning"):
+            elif lvl in ("warn", "warning"):
                 st.warning(msg)
             else:
                 st.info(msg)
@@ -149,7 +160,7 @@ if q:
                 st.stop()
 
         # Render the current assistant turn (same renderer as history)
-        st.markdown(envelope.get("display_text",""))
+        st.markdown(envelope.get("display_text", ""))
 
         if "structured" in envelope:
             with st.expander("Structured output", expanded=False):
@@ -162,7 +173,7 @@ if q:
                 else:
                     st.text(content)
 
-        if "snippets" in envelope and envelope["snippets"]:
+        if envelope.get("snippets"):
             with st.expander("Retrieved snippets", expanded=False):
                 for sn in envelope["snippets"]:
                     where_bits = []
@@ -172,14 +183,14 @@ if q:
                         where_bits.append(sn["header_path"])
                     where = " | ".join(where_bits)
                     st.markdown(f"**[{sn.get('id','?')}]** {sn.get('doc_id','')}  _{where}_")
-                    st.write(sn.get("text",""))
+                    st.write(sn.get("text", ""))
 
         for alert in envelope.get("alerts", []):
             lvl = (alert.get("level") or "info").lower()
-            msg = alert.get("text","")
+            msg = alert.get("text", "")
             if lvl == "error":
                 st.error(msg)
-            elif lvl in ("warn","warning"):
+            elif lvl in ("warn", "warning"):
                 st.warning(msg)
             else:
                 st.info(msg)
@@ -188,7 +199,7 @@ if q:
             st.markdown("**Follow-ups:**")
             cols = st.columns(min(3, len(envelope["followups"])))
             for i, f in enumerate(envelope["followups"]):
-                with cols[i % len(cols)]:
+                with cols[i % len(envelope["followups"])]:
                     if st.button(f"➡️ {f}", key=f"fu-live-{i}"):
                         st.session_state.next_prefill = f
 
