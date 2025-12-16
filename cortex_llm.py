@@ -22,7 +22,7 @@ class CortexLLMClient:
         self.default_model = "vertex_ai/gemini-2.5-flash"
         
         # OpenAI SDK compatibility attributes
-        self.api_key = "cortex-placeholder-key"  # Required by OpenAI SDK
+        self.api_key = "cortex-placeholder-key"
         self.organization = None
         self.base_url_attr = self.base_url
     
@@ -54,12 +54,11 @@ class CortexLLMClient:
         # Add response format if JSON requested
         if response_format and response_format.get("type") == "json_object":
             # Modify the last message to request JSON output
-            modified_messages = messages.copy()
+            modified_messages = [msg.copy() for msg in messages]
             if modified_messages:
-                last_msg = modified_messages[-1].copy()
+                last_msg = modified_messages[-1]
                 if last_msg["role"] == "user":
                     last_msg["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
-                    modified_messages[-1] = last_msg
                 else:
                     modified_messages.append({
                         "role": "user",
@@ -68,26 +67,65 @@ class CortexLLMClient:
             payload["messages"] = modified_messages
         
         try:
-            response = self.api.call_api_post(
+            # Call the API
+            api_response = self.api.call_api_post(
                 url=chat_url,
                 headers=self.headers,
                 payload=payload,
                 cert=self.cert
             )
             
-            # Parse response to match OpenAI structure
-            if hasattr(response, 'json'):
-                response_data = response.json()
-            elif isinstance(response, dict):
-                response_data = response
+            # Handle different response types from call_api_post
+            response_data = None
+            
+            # Case 1: Tuple returned (response, status_code) or similar
+            if isinstance(api_response, tuple):
+                print(f"📦 API returned tuple with {len(api_response)} elements")
+                # Usually the first element is the actual response
+                actual_response = api_response[0]
+                
+                if hasattr(actual_response, 'json'):
+                    response_data = actual_response.json()
+                elif isinstance(actual_response, dict):
+                    response_data = actual_response
+                elif isinstance(actual_response, str):
+                    try:
+                        response_data = json.loads(actual_response)
+                    except:
+                        response_data = {"choices": [{"message": {"content": actual_response}}]}
+                else:
+                    response_data = {"choices": [{"message": {"content": str(actual_response)}}]}
+            
+            # Case 2: Response object with .json() method
+            elif hasattr(api_response, 'json'):
+                response_data = api_response.json()
+            
+            # Case 3: Already a dict
+            elif isinstance(api_response, dict):
+                response_data = api_response
+            
+            # Case 4: String (try to parse as JSON)
+            elif isinstance(api_response, str):
+                try:
+                    response_data = json.loads(api_response)
+                except:
+                    response_data = {"choices": [{"message": {"content": api_response}}]}
+            
+            # Case 5: Unknown type
             else:
-                response_data = {"choices": [{"message": {"content": str(response)}}]}
+                print(f"⚠️ Unexpected response type: {type(api_response)}")
+                response_data = {"choices": [{"message": {"content": str(api_response)}}]}
+            
+            # Debug: Print response structure
+            print(f"📊 Response data keys: {response_data.keys() if isinstance(response_data, dict) else 'not a dict'}")
             
             # Create OpenAI-compatible response object
             return self._create_chat_completion(response_data)
             
         except Exception as e:
-            print(f"Error calling Cortex API: {e}")
+            print(f"❌ Error calling Cortex API: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def _create_chat_completion(self, data: Dict) -> Any:
@@ -100,12 +138,16 @@ class CortexLLMClient:
                 self.model = data.get("model", "vertex_ai/gemini-2.5-flash")
                 self.choices = self._create_choices(data)
                 self.usage = data.get("usage", {})
+                
+                # Debug
+                print(f"✅ Created ChatCompletion with {len(self.choices)} choices")
             
             def _create_choices(self, data):
-                if "choices" in data:
+                if "choices" in data and isinstance(data["choices"], list):
                     return [self._create_choice(choice) for choice in data["choices"]]
                 else:
-                    # Fallback if response format is different
+                    # Fallback: create a single choice from the entire data
+                    print("⚠️ No 'choices' array found, creating fallback choice")
                     return [self._create_choice({"message": {"content": str(data)}})]
             
             def _create_choice(self, choice_data):
@@ -120,9 +162,12 @@ class CortexLLMClient:
                             def __init__(self, message_data):
                                 self.role = message_data.get("role", "assistant")
                                 self.content = message_data.get("content", "")
-                                # OpenAI Agents SDK might check for tool_calls
                                 self.tool_calls = message_data.get("tool_calls", None)
                                 self.function_call = message_data.get("function_call", None)
+                                
+                                # Debug
+                                if self.content:
+                                    print(f"💬 Message content length: {len(self.content)}")
                         return Message(message_data)
                 return Choice(choice_data)
         
@@ -177,6 +222,7 @@ class CortexLLMClient:
         }
         
         try:
+            # Direct requests call (not using apihandler for embeddings)
             response = requests.post(
                 embedding_url,
                 json=payload,
@@ -190,7 +236,9 @@ class CortexLLMClient:
             return self._create_embedding_response(response_data)
             
         except Exception as e:
-            print(f"Error calling Cortex Embeddings API: {e}")
+            print(f"❌ Error calling Cortex Embeddings API: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def _create_embedding_response(self, data: Dict) -> Any:

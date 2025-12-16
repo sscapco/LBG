@@ -15,7 +15,6 @@ import os
 import json
 import pandas as pd
 import numpy as np
-from openai import AzureOpenAI, AsyncAzureOpenAI
 import re
 
 from automation_registry2 import (
@@ -25,7 +24,7 @@ from automation_registry2 import (
     list_available_automations
 )
 
-# Import LLM configuration
+# Import LLM configuration 
 from llm_config import initialize_clients, DEPLOYMENT_NAME, EMBEDDING_MODEL
 
 ######### Environment & Clients #########
