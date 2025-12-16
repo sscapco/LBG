@@ -1,0 +1,11 @@
+I've finished my DPWG presentation and got endorsement from DPC. What should I do next?
+
+Can you tell me what I need to do for the DOI process?
+
+Run the naming check. The name is AL12345.CustomerData and it's an ODP
+
+I have completed s3, can you give me details about s4
+
+Before launch, who signs us off from an operations/support point of view?
+
+Do I need to do the security bits or the cloud checks—or are they the same thing?

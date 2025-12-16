@@ -1,0 +1,9 @@
+openai
+openai-agents
+python-dotenv
+pandas
+scikit-learn 
+numpy
+openpyxl
+streamlit 
+pyyaml
