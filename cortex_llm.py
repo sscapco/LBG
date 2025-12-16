@@ -18,7 +18,7 @@ class CortexLLMClient:
             'x-lbg-client-id': constants.CLIENT_ID,
             'x-lbg-client-secret': constants.CLIENT_SECRET
         }
-        self.cert = constants.root_CA
+        self.cert = constants.Root_CA
         self.default_model = "vertex_ai/gemini-2.5-flash"
         
         # OpenAI SDK compatibility attributes
@@ -53,7 +53,6 @@ class CortexLLMClient:
         
         # Add response format if JSON requested
         if response_format and response_format.get("type") == "json_object":
-            # Modify the last message to request JSON output
             modified_messages = [msg.copy() for msg in messages]
             if modified_messages:
                 last_msg = modified_messages[-1]
@@ -67,8 +66,9 @@ class CortexLLMClient:
             payload["messages"] = modified_messages
         
         try:
+            print(f"🔧 Calling Cortex API...")
+            
             # Call the API
-            print(f"\n🔧 Calling Cortex API...")
             api_response = self.api.call_api_post(
                 url=chat_url,
                 headers=self.headers,
@@ -76,109 +76,95 @@ class CortexLLMClient:
                 cert=self.cert
             )
             
-            print(f"🔍 Raw API Response Type: {type(api_response)}")
+            print(f"🔍 API Response Type: {type(api_response)}")
             
-            # Handle different response types from call_api_post
-            response_data = None
-            
-            # Case 0: None response (API returned nothing)
+            # Handle None response
             if api_response is None:
-                print(f"⚠️ API returned None - this likely means an error occurred")
-                # Check if there's an error in the API handler
-                raise Exception("API call returned None - check your API handler for errors")
+                error_msg = "API call returned None - check your api_requests.py for errors"
+                print(f"❌ {error_msg}")
+                raise Exception(error_msg)
             
-            # Case 1: Tuple returned (response, status_code) or similar
-            elif isinstance(api_response, tuple):
-                print(f"📦 API returned tuple with {len(api_response)} elements")
-                for i, elem in enumerate(api_response):
-                    print(f"   Tuple[{i}] type: {type(elem)}")
-                
-                # Usually the first element is the actual response
-                actual_response = api_response[0]
-                
-                if hasattr(actual_response, 'json'):
-                    response_data = actual_response.json()
-                elif hasattr(actual_response, 'text'):
-                    response_data = json.loads(actual_response.text)
-                elif isinstance(actual_response, dict):
-                    response_data = actual_response
-                elif isinstance(actual_response, str):
-                    try:
-                        response_data = json.loads(actual_response)
-                    except:
-                        response_data = {"choices": [{"message": {"content": actual_response}}]}
-                else:
-                    response_data = {"choices": [{"message": {"content": str(actual_response)}}]}
+            # Parse response
+            response_data = self._parse_api_response(api_response)
             
-            # Case 2: Response object with .json() method
-            elif hasattr(api_response, 'json'):
-                response_data = api_response.json()
-                print(f"✅ Extracted JSON from response object")
-            
-            # Case 3: Already a dict
-            elif isinstance(api_response, dict):
-                response_data = api_response
-                print(f"✅ Response is already a dict")
-            
-            # Case 4: String (try to parse as JSON)
-            elif isinstance(api_response, str):
-                try:
-                    response_data = json.loads(api_response)
-                    print(f"✅ Parsed JSON from string")
-                except:
-                    response_data = {"choices": [{"message": {"content": api_response}}]}
-                    print(f"⚠️ Created fallback response from string")
-            
-            # Case 5: Unknown type
-            else:
-                print(f"⚠️ Unexpected response type: {type(api_response)}")
-                response_data = {"choices": [{"message": {"content": str(api_response)}}]}
-            
-            # Debug: Print response structure
-            if isinstance(response_data, dict):
-                print(f"📊 Response data keys: {list(response_data.keys())}")
-                if "choices" in response_data and isinstance(response_data["choices"], list):
-                    print(f"   ✓ Has 'choices' array with {len(response_data['choices'])} items")
-                    if len(response_data["choices"]) > 0:
-                        first_choice = response_data["choices"][0]
-                        print(f"   ✓ First choice keys: {list(first_choice.keys())}")
-                        if "message" in first_choice:
-                            print(f"   ✓ Has 'message' key")
-                            if "content" in first_choice["message"]:
-                                content = first_choice["message"]["content"]
-                                print(f"   ✓ Content length: {len(content)} chars")
-            else:
-                print(f"❌ response_data is not a dict: {type(response_data)}")
-            
-            # Create OpenAI-compatible response object
+            # Create and return ChatCompletion object
             completion = self._create_chat_completion(response_data)
             
-            # Verify it's the right type
-            print(f"🎯 Created completion, type: {type(completion)}")
-            print(f"   Has 'choices' attr: {hasattr(completion, 'choices')}")
-            
+            print(f"✅ Completion created successfully")
             return completion
             
         except Exception as e:
-            print(f"❌ Error calling Cortex API: {e}")
+            print(f"❌ Error in _call_chat_completion: {e}")
             import traceback
             traceback.print_exc()
             raise
     
+    def _parse_api_response(self, api_response: Any) -> Dict:
+        """Parse various API response formats into a standard dict"""
+        
+        response_data = None
+        
+        # Case 1: Tuple (response, status_code)
+        if isinstance(api_response, tuple):
+            print(f"📦 Tuple with {len(api_response)} elements")
+            actual_response = api_response[0]
+            
+            if hasattr(actual_response, 'json'):
+                response_data = actual_response.json()
+            elif hasattr(actual_response, 'text'):
+                response_data = json.loads(actual_response.text)
+            elif isinstance(actual_response, dict):
+                response_data = actual_response
+            elif isinstance(actual_response, str):
+                try:
+                    response_data = json.loads(actual_response)
+                except:
+                    response_data = {"choices": [{"message": {"content": actual_response}}]}
+            else:
+                response_data = {"choices": [{"message": {"content": str(actual_response)}}]}
+        
+        # Case 2: Response object with .json()
+        elif hasattr(api_response, 'json'):
+            response_data = api_response.json()
+            print(f"✅ Parsed from response.json()")
+        
+        # Case 3: Already a dict
+        elif isinstance(api_response, dict):
+            response_data = api_response
+            print(f"✅ Already a dict")
+        
+        # Case 4: String
+        elif isinstance(api_response, str):
+            try:
+                response_data = json.loads(api_response)
+                print(f"✅ Parsed from JSON string")
+            except:
+                response_data = {"choices": [{"message": {"content": api_response}}]}
+                print(f"⚠️ Created fallback from string")
+        
+        # Case 5: Unknown
+        else:
+            print(f"⚠️ Unknown type: {type(api_response)}")
+            response_data = {"choices": [{"message": {"content": str(api_response)}}]}
+        
+        # Validate structure
+        if isinstance(response_data, dict):
+            print(f"📊 Keys: {list(response_data.keys())}")
+            if "choices" in response_data:
+                print(f"   ✓ Has {len(response_data['choices'])} choices")
+        
+        return response_data
+    
     def _create_chat_completion(self, data: Dict) -> Any:
         """Create OpenAI-compatible ChatCompletion object"""
         
-        # CRITICAL FIX: Define Choice and Message classes OUTSIDE ChatCompletion
+        # Define inner classes at proper scope
         class Message:
             def __init__(self, message_data):
                 self.role = message_data.get("role", "assistant")
                 self.content = message_data.get("content", "")
                 self.tool_calls = message_data.get("tool_calls", None)
                 self.function_call = message_data.get("function_call", None)
-                
-                # Debug
-                if self.content:
-                    print(f"💬 Message content length: {len(self.content)}")
         
         class Choice:
             def __init__(self, choice_data):
@@ -198,23 +184,17 @@ class CortexLLMClient:
                 if "choices" in data and isinstance(data["choices"], list):
                     self.choices = [Choice(choice) for choice in data["choices"]]
                 else:
-                    # Fallback: create a single choice from the entire data
-                    print("⚠️ No 'choices' array found, creating fallback choice")
+                    print("⚠️ No choices array, creating fallback")
                     self.choices = [Choice({"message": {"content": str(data)}})]
-                
-                # Debug
-                print(f"✅ ChatCompletion created with {len(self.choices)} choices")
         
         return ChatCompletion(data)
     
     @property
     def chat(self):
-        """Property to match OpenAI client.chat interface"""
         return self
     
     @property
     def completions(self):
-        """Property to match OpenAI client.chat.completions interface"""
         return self
     
     def create(
@@ -227,7 +207,7 @@ class CortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Method to match OpenAI client.chat.completions.create interface"""
+        """Sync create method"""
         return self._call_chat_completion(
             model=model or self.default_model,
             messages=messages or [],
@@ -243,7 +223,6 @@ class CortexLLMClient:
         
         embedding_url = f"{self.base_url}/embeddings"
         
-        # Ensure input is a list
         if isinstance(input, str):
             input = [input]
         
@@ -256,7 +235,6 @@ class CortexLLMClient:
         }
         
         try:
-            # Direct requests call (not using apihandler for embeddings)
             response = requests.post(
                 embedding_url,
                 json=payload,
@@ -265,12 +243,10 @@ class CortexLLMClient:
             )
             
             response_data = response.json()
-            
-            # Create OpenAI-compatible response
             return self._create_embedding_response(response_data)
             
         except Exception as e:
-            print(f"❌ Error calling Cortex Embeddings API: {e}")
+            print(f"❌ Embeddings error: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -289,22 +265,15 @@ class CortexLLMClient:
                 self.object = "list"
                 self.model = data.get("model", "vertex_ai/text-embedding-004")
                 self.usage = data.get("usage", {})
-                
-                # Create embeddings
-                if "data" in data:
-                    self.data = [Embedding(item) for item in data["data"]]
-                else:
-                    self.data = []
+                self.data = [Embedding(item) for item in data.get("data", [])]
         
         return EmbeddingResponse(data)
     
     @property
     def embeddings(self):
-        """Property to match OpenAI client.embeddings interface"""
         return self
     
     def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-        """Method to match OpenAI embeddings.create interface"""
         return self._call_embeddings(model, input)
 
 
@@ -315,36 +284,39 @@ class AsyncCortexLLMClient:
         self.sync_client = CortexLLMClient()
         self.executor = ThreadPoolExecutor(max_workers=10)
         
-        # Copy essential attributes from sync client for OpenAI SDK compatibility
+        # Copy attributes for OpenAI SDK compatibility
         self.base_url = self.sync_client.base_url
         self.default_model = self.sync_client.default_model
-        
-        # CRITICAL: OpenAI Agents SDK requires these attributes
         self.api_key = self.sync_client.api_key
         self.organization = self.sync_client.organization
         self.base_url_attr = self.sync_client.base_url_attr
-        
-        # Additional attributes that might be checked
         self.timeout = None
         self.max_retries = 2
         self.default_headers = self.sync_client.headers
     
     async def _async_call(self, func, *args, **kwargs):
-        """Generic async wrapper for sync functions"""
+        """Generic async wrapper - FIXED VERSION"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self.executor, 
-            lambda: func(*args, **kwargs)
-        )
+        
+        # Create a wrapper function that calls the sync function with unpacked args
+        def _call():
+            try:
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                print(f"❌ Error in async wrapper: {e}")
+                raise
+        
+        # Run in executor
+        result = await loop.run_in_executor(self.executor, _call)
+        return result
     
     @property
     def chat(self):
-        """Return self to allow client.chat.completions.create() chaining"""
         return self
     
     @property
     def completions(self):
-        """Return self to allow client.chat.completions.create() chaining"""
         return self
     
     async def create(
@@ -357,25 +329,30 @@ class AsyncCortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Async version of chat completions create"""
-        return await self._async_call(
+        """Async create method - FIXED"""
+        print(f"🔄 AsyncCortexLLMClient.create() called")
+        
+        # Call the sync client's method with proper arguments
+        result = await self._async_call(
             self.sync_client._call_chat_completion,
-            model=model or self.default_model,
-            messages=messages or [],
-            temperature=temperature if temperature is not None else 0,
-            max_tokens=max_tokens or 1000,
-            stream=stream or False,
-            response_format=response_format,
+            model or self.default_model,
+            messages or [],
+            temperature if temperature is not None else 0,
+            max_tokens or 1000,
+            response_format,
+            stream or False,
             **kwargs
         )
+        
+        print(f"✅ AsyncCortexLLMClient.create() returning: {type(result)}")
+        return result
     
     @property
     def embeddings(self):
-        """Return self to allow client.embeddings.create() chaining"""
         return self
     
     async def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-        """Async version of embeddings create"""
+        """Async embeddings"""
         return await self._async_call(
             self.sync_client._call_embeddings,
             model,
@@ -383,39 +360,21 @@ class AsyncCortexLLMClient:
         )
     
     def __getattr__(self, name):
-        """
-        Fallback for any unexpected attribute access.
-        This helps debug what the Agents SDK is looking for.
-        """
-        # Try to get from sync_client first
+        """Fallback for unexpected attributes"""
         if hasattr(self.sync_client, name):
             attr = getattr(self.sync_client, name)
-            # If it's a callable, wrap it in async
             if callable(attr):
                 async def async_wrapper(*args, **kwargs):
                     return await self._async_call(attr, *args, **kwargs)
                 return async_wrapper
             return attr
         
-        # If not found, raise informative error
-        print(f"⚠️ AsyncCortexLLMClient: Unexpected attribute access: {name}")
-        raise AttributeError(
-            f"'{type(self).__name__}' object has no attribute '{name}'. "
-            f"The OpenAI Agents SDK may be looking for this attribute."
-        )
+        print(f"⚠️ Missing attribute: {name}")
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
-# Factory function to get the right client
 def get_llm_client(async_mode: bool = False):
-    """
-    Factory function to get sync or async Cortex client
-    
-    Args:
-        async_mode: If True, returns AsyncCortexLLMClient, else CortexLLMClient
-    
-    Returns:
-        Client compatible with OpenAI API interface
-    """
+    """Factory function"""
     if async_mode:
         return AsyncCortexLLMClient()
     return CortexLLMClient()
