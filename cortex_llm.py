@@ -20,6 +20,11 @@ class CortexLLMClient:
         }
         self.cert = constants.root_CA
         self.default_model = "vertex_ai/gemini-2.5-flash"
+        
+        # OpenAI SDK compatibility attributes
+        self.api_key = "cortex-placeholder-key"  # Required by OpenAI SDK
+        self.organization = None
+        self.base_url_attr = self.base_url
     
     def _call_chat_completion(
         self,
@@ -51,9 +56,10 @@ class CortexLLMClient:
             # Modify the last message to request JSON output
             modified_messages = messages.copy()
             if modified_messages:
-                last_msg = modified_messages[-1]
+                last_msg = modified_messages[-1].copy()
                 if last_msg["role"] == "user":
                     last_msg["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
+                    modified_messages[-1] = last_msg
                 else:
                     modified_messages.append({
                         "role": "user",
@@ -116,6 +122,7 @@ class CortexLLMClient:
                                 self.content = message_data.get("content", "")
                                 # OpenAI Agents SDK might check for tool_calls
                                 self.tool_calls = message_data.get("tool_calls", None)
+                                self.function_call = message_data.get("function_call", None)
                         return Message(message_data)
                 return Choice(choice_data)
         
@@ -229,9 +236,19 @@ class AsyncCortexLLMClient:
         self.sync_client = CortexLLMClient()
         self.executor = ThreadPoolExecutor(max_workers=10)
         
-        # Copy essential attributes from sync client
+        # Copy essential attributes from sync client for OpenAI SDK compatibility
         self.base_url = self.sync_client.base_url
         self.default_model = self.sync_client.default_model
+        
+        # CRITICAL: OpenAI Agents SDK requires these attributes
+        self.api_key = self.sync_client.api_key
+        self.organization = self.sync_client.organization
+        self.base_url_attr = self.sync_client.base_url_attr
+        
+        # Additional attributes that might be checked
+        self.timeout = None
+        self.max_retries = 2
+        self.default_headers = self.sync_client.headers
     
     async def _async_call(self, func, *args, **kwargs):
         """Generic async wrapper for sync functions"""
@@ -284,6 +301,28 @@ class AsyncCortexLLMClient:
             self.sync_client._call_embeddings,
             model,
             input
+        )
+    
+    def __getattr__(self, name):
+        """
+        Fallback for any unexpected attribute access.
+        This helps debug what the Agents SDK is looking for.
+        """
+        # Try to get from sync_client first
+        if hasattr(self.sync_client, name):
+            attr = getattr(self.sync_client, name)
+            # If it's a callable, wrap it in async
+            if callable(attr):
+                async def async_wrapper(*args, **kwargs):
+                    return await self._async_call(attr, *args, **kwargs)
+                return async_wrapper
+            return attr
+        
+        # If not found, raise informative error
+        print(f"⚠️ AsyncCortexLLMClient: Unexpected attribute access: {name}")
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'. "
+            f"The OpenAI Agents SDK may be looking for this attribute."
         )
 
 
