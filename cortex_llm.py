@@ -3,7 +3,6 @@ import asyncio
 from typing import List, Dict, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor
 import requests
-from api_requests import apihandler
 import constants
 
 
@@ -11,14 +10,21 @@ class CortexLLMClient:
     """Synchronous wrapper for Cortex API that mimics OpenAI client interface"""
     
     def __init__(self):
-        self.api = apihandler()
         self.base_url = constants.BASEURL
+        
+        # Headers matching your working Cortex_Connection.py
         self.headers = {
+            'x-lbg-client-id': constants.CLIENT_ID,
+            'x-lbg-client-secret': constants.CLIENT_SECRET
+        }
+        
+        # Headers for embeddings (with Content-Type)
+        self.headers_with_content_type = {
             'Content-Type': 'application/json',
             'x-lbg-client-id': constants.CLIENT_ID,
             'x-lbg-client-secret': constants.CLIENT_SECRET
         }
-        self.cert = constants.Root_CA
+        
         self.default_model = "vertex_ai/gemini-2.5-flash"
         
         # OpenAI SDK compatibility attributes
@@ -43,122 +49,53 @@ class CortexLLMClient:
         
         chat_url = f"{self.base_url}/chat/completions"
         
+        # Payload matching your working Cortex_Connection.py
         payload = {
             "model": model or self.default_model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": temperature,
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": 300
+            },
             "stream": False,
+            "logprobs": True
         }
         
-        # Add response format if JSON requested
+        # Add temperature if specified
+        if temperature is not None:
+            payload["temperature"] = temperature
+        
+        # Handle JSON response format request
         if response_format and response_format.get("type") == "json_object":
-            modified_messages = [msg.copy() for msg in messages]
-            if modified_messages:
-                last_msg = modified_messages[-1]
-                if last_msg["role"] == "user":
-                    last_msg["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
-                else:
-                    modified_messages.append({
-                        "role": "user",
-                        "content": "Respond ONLY with valid JSON."
-                    })
-            payload["messages"] = modified_messages
+            # Append instruction to last user message
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
         
         try:
-            print(f"🔧 Calling Cortex API...")
-            
-            # Call the API
-            api_response = self.api.call_api_post(
-                url=chat_url,
+            # Use requests.post directly with json=payload (matching your working code)
+            response = requests.post(
+                chat_url, 
+                json=payload,  # Use json= not data=json.dumps()
                 headers=self.headers,
-                payload=payload,
-                cert=self.cert
+                verify=False  # Matching your working code
             )
             
-            print(f"🔍 API Response Type: {type(api_response)}")
+            response.raise_for_status()
+            response_json = response.json()
             
-            # Handle None response
-            if api_response is None:
-                error_msg = "API call returned None - check your api_requests.py for errors"
-                print(f"❌ {error_msg}")
-                raise Exception(error_msg)
-            
-            # Parse response
-            response_data = self._parse_api_response(api_response)
-            
-            # Create and return ChatCompletion object
-            completion = self._create_chat_completion(response_data)
-            
-            print(f"✅ Completion created successfully")
-            return completion
+            # Create OpenAI-compatible response
+            return self._create_chat_completion(response_json)
             
         except Exception as e:
-            print(f"❌ Error in _call_chat_completion: {e}")
+            print(f"❌ Error calling Cortex API: {e}")
             import traceback
             traceback.print_exc()
             raise
     
-    def _parse_api_response(self, api_response: Any) -> Dict:
-        """Parse various API response formats into a standard dict"""
-        
-        response_data = None
-        
-        # Case 1: Tuple (response, status_code)
-        if isinstance(api_response, tuple):
-            print(f"📦 Tuple with {len(api_response)} elements")
-            actual_response = api_response[0]
-            
-            if hasattr(actual_response, 'json'):
-                response_data = actual_response.json()
-            elif hasattr(actual_response, 'text'):
-                response_data = json.loads(actual_response.text)
-            elif isinstance(actual_response, dict):
-                response_data = actual_response
-            elif isinstance(actual_response, str):
-                try:
-                    response_data = json.loads(actual_response)
-                except:
-                    response_data = {"choices": [{"message": {"content": actual_response}}]}
-            else:
-                response_data = {"choices": [{"message": {"content": str(actual_response)}}]}
-        
-        # Case 2: Response object with .json()
-        elif hasattr(api_response, 'json'):
-            response_data = api_response.json()
-            print(f"✅ Parsed from response.json()")
-        
-        # Case 3: Already a dict
-        elif isinstance(api_response, dict):
-            response_data = api_response
-            print(f"✅ Already a dict")
-        
-        # Case 4: String
-        elif isinstance(api_response, str):
-            try:
-                response_data = json.loads(api_response)
-                print(f"✅ Parsed from JSON string")
-            except:
-                response_data = {"choices": [{"message": {"content": api_response}}]}
-                print(f"⚠️ Created fallback from string")
-        
-        # Case 5: Unknown
-        else:
-            print(f"⚠️ Unknown type: {type(api_response)}")
-            response_data = {"choices": [{"message": {"content": str(api_response)}}]}
-        
-        # Validate structure
-        if isinstance(response_data, dict):
-            print(f"📊 Keys: {list(response_data.keys())}")
-            if "choices" in response_data:
-                print(f"   ✓ Has {len(response_data['choices'])} choices")
-        
-        return response_data
-    
     def _create_chat_completion(self, data: Dict) -> Any:
-        """Create OpenAI-compatible ChatCompletion object"""
+        """Create OpenAI-compatible ChatCompletion object from Cortex response"""
         
-        # Define inner classes at proper scope
         class Message:
             def __init__(self, message_data):
                 self.role = message_data.get("role", "assistant")
@@ -180,11 +117,11 @@ class CortexLLMClient:
                 self.model = data.get("model", "vertex_ai/gemini-2.5-flash")
                 self.usage = data.get("usage", {})
                 
-                # Create choices
+                # Parse choices from Cortex response
                 if "choices" in data and isinstance(data["choices"], list):
                     self.choices = [Choice(choice) for choice in data["choices"]]
                 else:
-                    print("⚠️ No choices array, creating fallback")
+                    # Fallback
                     self.choices = [Choice({"message": {"content": str(data)}})]
         
         return ChatCompletion(data)
@@ -211,7 +148,7 @@ class CortexLLMClient:
         return self._call_chat_completion(
             model=model or self.default_model,
             messages=messages or [],
-            temperature=temperature if temperature is not None else 0,
+            temperature=temperature,
             max_tokens=max_tokens or 1000,
             stream=stream or False,
             response_format=response_format,
@@ -219,31 +156,37 @@ class CortexLLMClient:
         )
     
     def _call_embeddings(self, model: str, input: Union[str, List[str]]) -> Any:
-        """Internal method to call Cortex embeddings"""
+        """Internal method to call Cortex embeddings - matching your working code"""
         
         embedding_url = f"{self.base_url}/embeddings"
         
+        # Ensure input is a list
         if isinstance(input, str):
             input = [input]
         
-        payload = {
+        # Payload matching your working Cortex_Connection.py
+        embeddings_payload = {
             'model': model or 'vertex_ai/text-embedding-004',
             'input': input,
             'dimensions': 256,
             'encoding_format': 'float',
-            'user': 'governance-pipeline'
+            'user': 'user-1223345'
         }
         
         try:
-            response = requests.post(
+            # Use requests.post directly (matching your working code)
+            embeddings_response = requests.post(
                 embedding_url,
-                json=payload,
-                headers=self.headers,
-                verify=self.cert
+                json=embeddings_payload,  # Use json= not data=json.dumps()
+                headers=self.headers_with_content_type,
+                verify=False  # Matching your working code
             )
             
-            response_data = response.json()
-            return self._create_embedding_response(response_data)
+            embeddings_response.raise_for_status()
+            embedding_data = embeddings_response.json()
+            
+            # Create OpenAI-compatible response
+            return self._create_embedding_response(embedding_data)
             
         except Exception as e:
             print(f"❌ Embeddings error: {e}")
@@ -265,7 +208,12 @@ class CortexLLMClient:
                 self.object = "list"
                 self.model = data.get("model", "vertex_ai/text-embedding-004")
                 self.usage = data.get("usage", {})
-                self.data = [Embedding(item) for item in data.get("data", [])]
+                
+                # Parse embeddings from Cortex response
+                if "data" in data:
+                    self.data = [Embedding(item) for item in data["data"]]
+                else:
+                    self.data = []
         
         return EmbeddingResponse(data)
     
@@ -295,19 +243,12 @@ class AsyncCortexLLMClient:
         self.default_headers = self.sync_client.headers
     
     async def _async_call(self, func, *args, **kwargs):
-        """Generic async wrapper - FIXED VERSION"""
+        """Generic async wrapper"""
         loop = asyncio.get_event_loop()
         
-        # Create a wrapper function that calls the sync function with unpacked args
         def _call():
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                print(f"❌ Error in async wrapper: {e}")
-                raise
+            return func(*args, **kwargs)
         
-        # Run in executor
         result = await loop.run_in_executor(self.executor, _call)
         return result
     
@@ -329,22 +270,17 @@ class AsyncCortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Async create method - FIXED"""
-        print(f"🔄 AsyncCortexLLMClient.create() called")
-        
-        # Call the sync client's method with proper arguments
+        """Async create method"""
         result = await self._async_call(
             self.sync_client._call_chat_completion,
             model or self.default_model,
             messages or [],
-            temperature if temperature is not None else 0,
+            temperature,
             max_tokens or 1000,
             response_format,
             stream or False,
             **kwargs
         )
-        
-        print(f"✅ AsyncCortexLLMClient.create() returning: {type(result)}")
         return result
     
     @property
@@ -369,7 +305,6 @@ class AsyncCortexLLMClient:
                 return async_wrapper
             return attr
         
-        print(f"⚠️ Missing attribute: {name}")
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
