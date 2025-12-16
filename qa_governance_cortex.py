@@ -3,7 +3,6 @@ from agents import (
     Runner,
     function_tool,
     OpenAIChatCompletionsModel,
-    set_default_openai_client,
     set_tracing_disabled,
 )
 from typing import List, Dict, Optional, Tuple
@@ -35,7 +34,6 @@ load_dotenv()
 client, async_client = initialize_clients()
 
 # Set up for OpenAI Agents SDK
-set_default_openai_client(async_client)
 set_tracing_disabled(disabled=True)
 
 shared_model = OpenAIChatCompletionsModel(

@@ -170,7 +170,7 @@ class CortexLLMClient:
             'input': input,
             'dimensions': 256,
             'encoding_format': 'float',
-            'user': 'user-1223345'
+            'user': 'governance-pipeline'
         }
         
         try:
@@ -219,10 +219,21 @@ class CortexLLMClient:
     
     @property
     def embeddings(self):
-        return self
-    
-    def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-        return self._call_embeddings(model, input)
+        """Property to match OpenAI client.embeddings interface"""
+        # Return an object that has both .create() and .create_embedding() methods
+        class EmbeddingsAPI:
+            def __init__(self, parent):
+                self.parent = parent
+            
+            def create(self, model: str, input: Union[str, List[str]], **kwargs):
+                """OpenAI-style .create() method"""
+                return self.parent._call_embeddings(model, input)
+            
+            def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
+                """Alternative method name"""
+                return self.parent._call_embeddings(model, input)
+        
+        return EmbeddingsAPI(self)
 
 
 class AsyncCortexLLMClient:
@@ -285,15 +296,29 @@ class AsyncCortexLLMClient:
     
     @property
     def embeddings(self):
-        return self
-    
-    async def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-        """Async embeddings"""
-        return await self._async_call(
-            self.sync_client._call_embeddings,
-            model,
-            input
-        )
+        """Property to match OpenAI client.embeddings interface"""
+        # Return an async-compatible embeddings API
+        class AsyncEmbeddingsAPI:
+            def __init__(self, parent):
+                self.parent = parent
+            
+            async def create(self, model: str, input: Union[str, List[str]], **kwargs):
+                """Async version of embeddings.create()"""
+                return await self.parent._async_call(
+                    self.parent.sync_client._call_embeddings,
+                    model,
+                    input
+                )
+            
+            async def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
+                """Alternative async method"""
+                return await self.parent._async_call(
+                    self.parent.sync_client._call_embeddings,
+                    model,
+                    input
+                )
+        
+        return AsyncEmbeddingsAPI(self)
     
     def __getattr__(self, name):
         """Fallback for unexpected attributes"""
