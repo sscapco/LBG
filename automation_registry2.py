@@ -1,5 +1,12 @@
+# This file is imported from your existing automation implementation
+# It should be located in the project root or a parent directory
+
 from typing import Dict, Callable, Any, Optional
 import json
+
+# Import Gemini adapter BEFORE importing handler to patch automation_tools
+import gemini_llm_adapter  # This patches automation_tools to use Gemini
+
 from automation_tools.handler import check_name_both
 
 

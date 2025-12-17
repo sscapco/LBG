@@ -208,34 +208,41 @@ def build_workflow_context(
 def generate_llm_response(
     context: str,
     user_message: str,
-    needs_disambiguation: bool
+    needs_disambiguation: bool,
+    focus_step: Optional[Dict] = None,
+    next_steps: List[Dict] = None,
+    candidate_steps: List[Dict] = None
 ) -> str:
     """Generate natural language response using LLM"""
     
     system_prompt = """You are a helpful, practical data governance assistant.
 
 Your job is to help users navigate governance workflows by:
-- Answering their questions about governance steps
-- Explaining what they need to do
-- Suggesting next steps
-- Clarifying when there are multiple options
+- Providing COMPLETE details about steps (purpose AND description)
+- Explaining exactly what they need to do
+- Suggesting next steps with full context
+- When there's ambiguity, present ALL options with their details to help user choose
+
+CRITICAL RULES:
+1. When explaining a step, ALWAYS include its full Description, not just the name
+2. When multiple steps are candidates, explain EACH option in detail (not just names)
+3. Be thorough - users need complete information to make decisions
+4. Use bullet points to organize detailed information clearly
 
 Keep your responses:
-- Concise and actionable
+- Detailed and actionable (not just step names!)
 - Friendly but professional
-- Focused on helping them complete their work
-
-Use bullet points sparingly and only when listing multiple clear options."""
+- Focused on helping them complete their work"""
 
     response_prompt = f"""Based on this workflow context, respond to the user's question.
 
 {context}
 
 Instructions:
-- If disambiguation is needed (needs_disambiguation = true), ask the user to clarify which step they meant
-- If automation is available, mention it naturally but don't be pushy
-- If explaining next steps, be clear and actionable
-- Keep it conversational and helpful
+- If disambiguation is needed, present ALL candidate steps with their PURPOSE and DESCRIPTION
+- When explaining what to do next, include the full step description
+- If automation is available, mention it naturally
+- Be thorough - give them the details they need
 
 User's Question: {user_message}
 
@@ -249,7 +256,7 @@ Your Response:"""
     answer = cortex_client.chat_completion(
         messages=messages,
         temperature=0,
-        max_tokens=900
+        max_tokens=1500  # Increased for detailed responses
     )
     
     return answer
@@ -329,7 +336,14 @@ def analyze_user_query(
         user_message=user_message
     )
     
-    answer = generate_llm_response(context, user_message, needs_disambiguation)
+    answer = generate_llm_response(
+        context=context,
+        user_message=user_message,
+        needs_disambiguation=needs_disambiguation,
+        focus_step=focus_step,
+        next_steps=next_steps,
+        candidate_steps=candidate_steps
+    )
     
     return {
         "intent": intent,
