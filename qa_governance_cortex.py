@@ -2,7 +2,6 @@ from agents import (
     Agent,
     Runner,
     function_tool,
-    OpenAIChatCompletionsModel,
     set_tracing_disabled,
 )
 from typing import List, Dict, Optional, Tuple
@@ -15,6 +14,7 @@ import json
 import pandas as pd
 import numpy as np
 import re
+from cortex_agents_model import CortexChatCompletionsModel
 
 from automation_registry2 import (
     get_automation_info,
@@ -36,9 +36,9 @@ client, async_client = initialize_clients()
 # Set up for OpenAI Agents SDK
 set_tracing_disabled(disabled=True)
 
-shared_model = OpenAIChatCompletionsModel(
+shared_model = CortexChatCompletionsModel(
     model=DEPLOYMENT_NAME,
-    openai_client=async_client,
+    cortex_client=async_client,
 )
 
 ######### Governance Data Loading #########

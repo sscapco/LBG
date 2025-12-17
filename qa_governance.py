@@ -692,12 +692,11 @@ def compute_workflow_state(mapped: MappedSteps) -> WorkflowState:
     ):
         c1, c2 = semantic_candidates[0], semantic_candidates[1]
         # ambiguous if both reasonably strong and fairly close
-        # Made threshold more forgiving (0.15 instead of 0.10) to reduce inconsistency
         if (
             c1.step_id != c2.step_id
-            and c1.score >= 0.40  # Raised from 0.35 - require higher confidence for top match
+            and c1.score >= 0.40   
             and c2.score >= 0.35
-            and (c1.score - c2.score) <= 0.15  # Widened from 0.10 - more forgiving threshold
+            and (c1.score - c2.score) <= 0.15   
         ):
             # If the user hasn't described explicit progress, treat as ambiguous conceptual question
             if not completed_ids and not in_progress_ids:
