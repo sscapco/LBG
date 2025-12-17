@@ -154,51 +154,72 @@ def build_workflow_context(
     context_parts.append(f"User Intent: {intent}")
     context_parts.append(f"User Message: {user_message}")
     
-    # Current focus
-    if focus_step:
-        context_parts.append(f"\nCurrent Focus: {focus_step['id']} - {focus_step['name']}")
+    # For "ask_next_step" intent, ONLY include next steps
+    if intent == "ask_next_step":
+        if next_steps:
+            context_parts.append("\nNext Step(s) to Focus On:")
+            for step in next_steps:
+                context_parts.append(f"\n{step['id']}: {step['name']}")
+                context_parts.append(f"Purpose: {step['purpose']}")
+                context_parts.append(f"Description: {step['description']}")
+        else:
+            context_parts.append("\nNo next steps available - workflow may be complete")
+        
+        # Add automation if available
+        if automation_options:
+            context_parts.append("\n🤖 Automation Available:")
+            for opt in automation_options:
+                context_parts.append(f"  - {opt['step_name']}: Can be automated via '{opt['automation_step']}'")
+        
+        return "\n".join(context_parts)
+    
+    # For disambiguation, show candidate options
+    if needs_disambiguation and candidate_steps:
+        context_parts.append("\n⚠️ Multiple Steps Match - User Needs to Choose:")
+        for step in candidate_steps:
+            context_parts.append(f"\n{step['id']}: {step['name']}")
+            context_parts.append(f"Purpose: {step['purpose']}")
+            context_parts.append(f"Description: {step['description']}")
+        
+        return "\n".join(context_parts)
+    
+    # For explain_step intent, focus on the specific step
+    if intent == "explain_step" and focus_step:
+        context_parts.append(f"\nStep Being Asked About:")
+        context_parts.append(f"{focus_step['id']}: {focus_step['name']}")
         context_parts.append(f"Purpose: {focus_step['purpose']}")
         context_parts.append(f"Description: {focus_step['description']}")
+        
+        if focus_step.get('automatable'):
+            context_parts.append(f"\n🤖 This step can be automated")
+        
+        return "\n".join(context_parts)
     
-    # Anchor (where user is in workflow)
-    if anchor_step and anchor_step != focus_step:
-        context_parts.append(f"\nUser's Current Position: {anchor_step['id']} - {anchor_step['name']}")
+    # For other intents, provide minimal context
+    if focus_step:
+        context_parts.append(f"\nCurrent Focus: {focus_step['id']} - {focus_step['name']}")
     
-    # Matched steps
-    if matched_steps:
-        context_parts.append("\nMatched Steps:")
-        for step in matched_steps:
-            context_parts.append(f"  - {step['id']}: {step['name']}")
-    
-    # Disambiguation needed
-    if needs_disambiguation and candidate_steps:
-        context_parts.append("\n⚠️ Disambiguation Needed:")
-        for step in candidate_steps:
-            context_parts.append(f"  - {step['id']}: {step['name']} - {step['purpose']}")
-    
-    # Next steps
-    if next_steps:
+    # Only include next steps if relevant to the query
+    if next_steps and ("next" in user_message.lower() or "after" in user_message.lower()):
         context_parts.append("\nNext Steps Available:")
         for step in next_steps:
             context_parts.append(f"  - {step['id']}: {step['name']}")
     
-    # Previous steps
-    if previous_steps:
+    # Only include previous if relevant
+    if previous_steps and ("previous" in user_message.lower() or "before" in user_message.lower()):
         context_parts.append("\nPrevious Steps:")
         for step in previous_steps:
             context_parts.append(f"  - {step['id']}: {step['name']}")
     
-    # Progress tracking
+    # Progress tracking (minimal)
     if completed_ids:
-        context_parts.append(f"\nCompleted Steps: {', '.join(completed_ids)}")
-    if in_progress_ids:
-        context_parts.append(f"In Progress Steps: {', '.join(in_progress_ids)}")
+        context_parts.append(f"\nCompleted: {len(completed_ids)} steps")
     
     # Automation options
     if automation_options:
         context_parts.append("\n🤖 Automation Available:")
         for opt in automation_options:
-            context_parts.append(f"  - {opt['step_name']}: Can be automated via '{opt['automation_step']}'")
+            context_parts.append(f"  - {opt['step_name']}")
     
     return "\n".join(context_parts)
 
@@ -218,31 +239,32 @@ def generate_llm_response(
     system_prompt = """You are a helpful, practical data governance assistant.
 
 Your job is to help users navigate governance workflows by:
-- Providing COMPLETE details about steps (purpose AND description)
-- Explaining exactly what they need to do
-- Suggesting next steps with full context
-- When there's ambiguity, present ALL options with their details to help user choose
+- Answering their specific question directly and concisely
+- Providing step details (purpose + description) ONLY when relevant to the question
+- When multiple steps could apply, present options with details
+- Being focused and practical
 
 CRITICAL RULES:
-1. When explaining a step, ALWAYS include its full Description, not just the name
-2. When multiple steps are candidates, explain EACH option in detail (not just names)
-3. Be thorough - users need complete information to make decisions
-4. Use bullet points to organize detailed information clearly
+1. Answer the ACTUAL QUESTION - don't explain things they didn't ask about
+2. If they ask "what's next", ONLY describe the next step (not current or previous steps)
+3. If they need to choose between options, present EACH option clearly
+4. Keep responses focused and actionable - no unnecessary background
 
 Keep your responses:
-- Detailed and actionable (not just step names!)
-- Friendly but professional
-- Focused on helping them complete their work"""
+- Direct and focused on their question
+- Complete when describing a step (include purpose + description)
+- Concise - don't explain steps they didn't ask about"""
 
     response_prompt = f"""Based on this workflow context, respond to the user's question.
 
 {context}
 
 Instructions:
-- If disambiguation is needed, present ALL candidate steps with their PURPOSE and DESCRIPTION
-- When explaining what to do next, include the full step description
-- If automation is available, mention it naturally
-- Be thorough - give them the details they need
+- Answer their SPECIFIC question - don't over-explain
+- If they ask "what's next", focus ONLY on the next step(s)
+- If disambiguation needed, present the options clearly
+- If automation available for the step they're asking about, mention it
+- Be concise but complete for what they actually asked
 
 User's Question: {user_message}
 
@@ -256,7 +278,7 @@ Your Response:"""
     answer = cortex_client.chat_completion(
         messages=messages,
         temperature=0,
-        max_tokens=1500  # Increased for detailed responses
+        max_tokens=1000  # Reduced from 1500 for more concise responses
     )
     
     return answer
