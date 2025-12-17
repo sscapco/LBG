@@ -11,13 +11,11 @@ class CortexLLMClient:
     def __init__(self):
         self.base_url = constants.BASEURL
         
-        # Headers matching your working Cortex_Connection.py
         self.headers = {
             'x-lbg-client-id': constants.CLIENT_ID,
             'x-lbg-client-secret': constants.CLIENT_SECRET
         }
         
-        # Headers for embeddings (with Content-Type)
         self.headers_with_content_type = {
             'Content-Type': 'application/json',
             'x-lbg-client-id': constants.CLIENT_ID,
@@ -30,6 +28,19 @@ class CortexLLMClient:
         self.api_key = "cortex-placeholder-key"
         self.organization = None
         self.base_url_attr = self.base_url
+    
+    def __getstate__(self):
+        """Make client pickle-safe for serialization"""
+        return {
+            'base_url': self.base_url,
+            'default_model': self.default_model,
+            'api_key': self.api_key,
+            'organization': self.organization,
+        }
+    
+    def __setstate__(self, state):
+        """Restore client from pickle"""
+        self.__init__()
     
     def _call_chat_completion(
         self,
@@ -48,11 +59,10 @@ class CortexLLMClient:
         
         chat_url = f"{self.base_url}/chat/completions"
         
-        # Deep copy and clean messages to ensure no Pydantic objects
+        # Deep copy and clean messages
         clean_messages = []
         for msg in messages:
             if hasattr(msg, 'model_dump'):
-                # It's a Pydantic model
                 msg = msg.model_dump()
             elif hasattr(msg, 'dict'):
                 msg = msg.dict()
@@ -62,7 +72,6 @@ class CortexLLMClient:
                 "content": str(msg.get("content", ""))
             })
         
-        # Payload matching your working Cortex_Connection.py
         payload = {
             "model": model or self.default_model,
             "messages": clean_messages,
@@ -75,13 +84,10 @@ class CortexLLMClient:
             "logprobs": True
         }
         
-        # Add temperature if specified
         if temperature is not None:
             payload["temperature"] = temperature
         
-        # Handle JSON response format request
         if response_format:
-            # Extract type if it's a Pydantic object
             if hasattr(response_format, 'model_dump'):
                 response_format = response_format.model_dump()
             elif hasattr(response_format, 'dict'):
@@ -93,7 +99,6 @@ class CortexLLMClient:
                     payload["messages"] = clean_messages
         
         try:
-            # Use requests.post directly
             response = requests.post(
                 chat_url, 
                 json=payload,
@@ -105,7 +110,6 @@ class CortexLLMClient:
             response.raise_for_status()
             response_json = response.json()
             
-            # Create OpenAI-compatible response
             return self._create_chat_completion(response_json)
             
         except Exception as e:
@@ -115,7 +119,7 @@ class CortexLLMClient:
             raise
     
     def _create_chat_completion(self, data: Dict) -> Any:
-        """Create OpenAI-compatible ChatCompletion object from Cortex response"""
+        """Create OpenAI-compatible ChatCompletion object"""
         
         class Message:
             def __init__(self, message_data):
@@ -163,7 +167,6 @@ class CortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Sync create method"""
         return self._call_chat_completion(
             model=model or self.default_model,
             messages=messages or [],
@@ -175,7 +178,6 @@ class CortexLLMClient:
         )
     
     def _call_embeddings(self, model: str, input: Union[str, List[str]]) -> Any:
-        """Internal method to call Cortex embeddings"""
         
         embedding_url = f"{self.base_url}/embeddings"
         
@@ -211,7 +213,6 @@ class CortexLLMClient:
             raise
     
     def _create_embedding_response(self, data: Dict) -> Any:
-        """Create OpenAI-compatible EmbeddingResponse object"""
         
         class Embedding:
             def __init__(self, item):
@@ -234,7 +235,6 @@ class CortexLLMClient:
     
     @property
     def embeddings(self):
-        """Property to match OpenAI client.embeddings interface"""
         class EmbeddingsAPI:
             def __init__(self, parent):
                 self.parent = parent
@@ -246,16 +246,11 @@ class CortexLLMClient:
 
 
 class AsyncCortexLLMClient:
-    """
-    Async wrapper - CRITICAL FIX
-    Instead of using ThreadPoolExecutor (which requires serialization),
-    we just call the sync client directly but wrap it as a coroutine
-    """
+    """Async wrapper - pickle-safe"""
     
     def __init__(self):
         self.sync_client = CortexLLMClient()
         
-        # Copy attributes for OpenAI SDK compatibility
         self.base_url = self.sync_client.base_url
         self.default_model = self.sync_client.default_model
         self.api_key = self.sync_client.api_key
@@ -264,6 +259,19 @@ class AsyncCortexLLMClient:
         self.timeout = None
         self.max_retries = 2
         self.default_headers = self.sync_client.headers
+    
+    def __getstate__(self):
+        """Make async client pickle-safe - CRITICAL for Agents SDK"""
+        return {
+            'base_url': self.base_url,
+            'default_model': self.default_model,
+            'api_key': self.api_key,
+            'organization': self.organization,
+        }
+    
+    def __setstate__(self, state):
+        """Restore async client from pickle"""
+        self.__init__()
     
     @property
     def chat(self):
@@ -283,11 +291,7 @@ class AsyncCortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """
-        Async create method - NO ThreadPoolExecutor!
-        Just call sync method directly and return as coroutine
-        """
-        # Call the sync client directly - no serialization needed!
+        """Async create - calls sync directly"""
         result = self.sync_client._call_chat_completion(
             model=model or self.default_model,
             messages=messages or [],
@@ -298,24 +302,20 @@ class AsyncCortexLLMClient:
             **kwargs
         )
         
-        # Return immediately - we're already async
         return result
     
     @property
     def embeddings(self):
-        """Property to match OpenAI client.embeddings interface"""
         class AsyncEmbeddingsAPI:
             def __init__(self, parent):
                 self.parent = parent
             
             async def create(self, model: str, input: Union[str, List[str]], **kwargs):
-                # Call sync method directly - no serialization!
                 return self.parent.sync_client._call_embeddings(model, input)
         
         return AsyncEmbeddingsAPI(self)
     
     def __getattr__(self, name):
-        """Fallback for unexpected attributes"""
         if hasattr(self.sync_client, name):
             return getattr(self.sync_client, name)
         
@@ -323,7 +323,6 @@ class AsyncCortexLLMClient:
 
 
 def get_llm_client(async_mode: bool = False):
-    """Factory function"""
     if async_mode:
         return AsyncCortexLLMClient()
     return CortexLLMClient()
