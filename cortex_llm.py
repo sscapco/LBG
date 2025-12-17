@@ -3,7 +3,10 @@ import asyncio
 from typing import List, Dict, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import constants
+import time
 
 
 class CortexLLMClient:
@@ -31,6 +34,17 @@ class CortexLLMClient:
         self.api_key = "cortex-placeholder-key"
         self.organization = None
         self.base_url_attr = self.base_url
+        
+        # Create a session with retry logic
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
     
     def _call_chat_completion(
         self,
@@ -73,12 +87,13 @@ class CortexLLMClient:
                 messages[-1]["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
         
         try:
-            # Use requests.post directly with json=payload (matching your working code)
-            response = requests.post(
+            # Use session.post with retry logic
+            response = self.session.post(
                 chat_url, 
-                json=payload,  # Use json= not data=json.dumps()
+                json=payload,
                 headers=self.headers,
-                verify=False  # Matching your working code
+                verify=False,
+                timeout=60  # 60 second timeout
             )
             
             response.raise_for_status()
@@ -87,6 +102,12 @@ class CortexLLMClient:
             # Create OpenAI-compatible response
             return self._create_chat_completion(response_json)
             
+        except requests.exceptions.Timeout:
+            print(f"❌ Timeout calling Cortex chat API after 60 seconds")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Connection error calling Cortex chat API: {e}")
+            raise
         except Exception as e:
             print(f"❌ Error calling Cortex API: {e}")
             import traceback
@@ -173,26 +194,64 @@ class CortexLLMClient:
             'user': 'governance-pipeline'
         }
         
-        try:
-            # Use requests.post directly (matching your working code)
-            embeddings_response = requests.post(
-                embedding_url,
-                json=embeddings_payload,  # Use json= not data=json.dumps()
-                headers=self.headers_with_content_type,
-                verify=False  # Matching your working code
-            )
-            
-            embeddings_response.raise_for_status()
-            embedding_data = embeddings_response.json()
-            
-            # Create OpenAI-compatible response
-            return self._create_embedding_response(embedding_data)
-            
-        except Exception as e:
-            print(f"❌ Embeddings error: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"🔧 Calling embeddings API (attempt {attempt + 1}/{max_retries})...")
+                
+                # Use session.post with retry logic
+                embeddings_response = self.session.post(
+                    embedding_url,
+                    json=embeddings_payload,
+                    headers=self.headers_with_content_type,
+                    verify=False,
+                    timeout=30  # 30 second timeout for embeddings
+                )
+                
+                embeddings_response.raise_for_status()
+                embedding_data = embeddings_response.json()
+                
+                print(f"✅ Embeddings API call successful")
+                
+                # Create OpenAI-compatible response
+                return self._create_embedding_response(embedding_data)
+                
+            except requests.exceptions.Timeout:
+                print(f"⏱️ Timeout on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"❌ Embeddings timeout after {max_retries} attempts")
+                    raise
+                    
+            except requests.exceptions.ConnectionError as e:
+                print(f"🔌 Connection error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"❌ Embeddings connection failed after {max_retries} attempts")
+                    raise
+                    
+            except requests.exceptions.HTTPError as e:
+                print(f"❌ HTTP error: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"   Status: {e.response.status_code}")
+                    print(f"   Response: {e.response.text[:500]}")
+                raise
+                
+            except Exception as e:
+                print(f"❌ Embeddings error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    import traceback
+                    traceback.print_exc()
+                    raise
     
     def _create_embedding_response(self, data: Dict) -> Any:
         """Create OpenAI-compatible EmbeddingResponse object"""
@@ -220,7 +279,6 @@ class CortexLLMClient:
     @property
     def embeddings(self):
         """Property to match OpenAI client.embeddings interface"""
-        # Return an object that has both .create() and .create_embedding() methods
         class EmbeddingsAPI:
             def __init__(self, parent):
                 self.parent = parent
@@ -297,7 +355,6 @@ class AsyncCortexLLMClient:
     @property
     def embeddings(self):
         """Property to match OpenAI client.embeddings interface"""
-        # Return an async-compatible embeddings API
         class AsyncEmbeddingsAPI:
             def __init__(self, parent):
                 self.parent = parent
