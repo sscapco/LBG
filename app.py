@@ -2,8 +2,13 @@
 Main Governance Application.
 Production-ready governance Q&A pipeline using LangGraph + Cortex.
 """
+import sys
+from pathlib import Path
 from typing import Dict, Optional
 from langchain_core.messages import HumanMessage
+
+# Add parent directory to path to allow imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from config import validate_all_config, CortexConfig, WorkflowConfig
 from core import get_cortex_llm, get_cortex_embeddings, EmbeddingManager
