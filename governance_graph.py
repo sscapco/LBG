@@ -65,12 +65,11 @@ def check_automation_node(state: GraphState) -> GraphState:
     if automation_result:
         print(f"   ✓ Automation executed: {automation_result['status']}")
         # Replace answer with automation result
-        return GraphState(
-            **state.model_dump(),
-            automation_requested=True,
-            automation_result=automation_result,
-            answer=automation_result["formatted_message"]
-        )
+        state_dict = state.model_dump()
+        state_dict['automation_requested'] = True
+        state_dict['automation_result'] = automation_result
+        state_dict['answer'] = automation_result["formatted_message"]
+        return GraphState(**state_dict)
     else:
         print("   ℹ️ No automation request detected")
         return state
@@ -100,10 +99,11 @@ def update_session_node(state: GraphState) -> GraphState:
         timestamp=datetime.utcnow().isoformat() + "Z"
     )
     
-    return GraphState(
-        **state.model_dump(),
-        updated_state=updated_state
-    )
+    # Create new state dict and update the updated_state field
+    state_dict = state.model_dump()
+    state_dict['updated_state'] = updated_state
+    
+    return GraphState(**state_dict)
 
 
 ######### Conditional Edges #########
