@@ -1,7 +1,6 @@
 import json
 import asyncio
 from typing import List, Dict, Optional, Any, Union
-from concurrent.futures import ThreadPoolExecutor
 import requests
 import constants
 
@@ -49,20 +48,19 @@ class CortexLLMClient:
         
         chat_url = f"{self.base_url}/chat/completions"
         
-        # Ensure messages is a clean list of dicts (deep copy to avoid mutation)
+        # Deep copy and clean messages to ensure no Pydantic objects
         clean_messages = []
         for msg in messages:
-            if isinstance(msg, dict):
-                clean_messages.append({
-                    "role": str(msg.get("role", "user")),
-                    "content": str(msg.get("content", ""))
-                })
-            else:
-                # Handle any non-dict messages
-                clean_messages.append({
-                    "role": "user",
-                    "content": str(msg)
-                })
+            if hasattr(msg, 'model_dump'):
+                # It's a Pydantic model
+                msg = msg.model_dump()
+            elif hasattr(msg, 'dict'):
+                msg = msg.dict()
+            
+            clean_messages.append({
+                "role": str(msg.get("role", "user")),
+                "content": str(msg.get("content", ""))
+            })
         
         # Payload matching your working Cortex_Connection.py
         payload = {
@@ -82,15 +80,20 @@ class CortexLLMClient:
             payload["temperature"] = temperature
         
         # Handle JSON response format request
-        if response_format and isinstance(response_format, dict):
-            if response_format.get("type") == "json_object":
-                # Append instruction to last user message
+        if response_format:
+            # Extract type if it's a Pydantic object
+            if hasattr(response_format, 'model_dump'):
+                response_format = response_format.model_dump()
+            elif hasattr(response_format, 'dict'):
+                response_format = response_format.dict()
+            
+            if isinstance(response_format, dict) and response_format.get("type") == "json_object":
                 if clean_messages and clean_messages[-1]["role"] == "user":
                     clean_messages[-1]["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
                     payload["messages"] = clean_messages
         
         try:
-            # Use requests.post directly with json=payload (matching your working code)
+            # Use requests.post directly
             response = requests.post(
                 chat_url, 
                 json=payload,
@@ -105,12 +108,6 @@ class CortexLLMClient:
             # Create OpenAI-compatible response
             return self._create_chat_completion(response_json)
             
-        except requests.exceptions.Timeout:
-            print(f"❌ Timeout calling Cortex chat API")
-            raise
-        except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection error: {e}")
-            raise
         except Exception as e:
             print(f"❌ Error calling Cortex API: {e}")
             import traceback
@@ -141,11 +138,9 @@ class CortexLLMClient:
                 self.model = data.get("model", "vertex_ai/gemini-2.5-flash")
                 self.usage = data.get("usage", {})
                 
-                # Parse choices from Cortex response
                 if "choices" in data and isinstance(data["choices"], list):
                     self.choices = [Choice(choice) for choice in data["choices"]]
                 else:
-                    # Fallback
                     self.choices = [Choice({"message": {"content": str(data)}})]
         
         return ChatCompletion(data)
@@ -180,15 +175,13 @@ class CortexLLMClient:
         )
     
     def _call_embeddings(self, model: str, input: Union[str, List[str]]) -> Any:
-        """Internal method to call Cortex embeddings - matching your working code"""
+        """Internal method to call Cortex embeddings"""
         
         embedding_url = f"{self.base_url}/embeddings"
         
-        # Ensure input is a list
         if isinstance(input, str):
             input = [input]
         
-        # Payload matching your working Cortex_Connection.py
         embeddings_payload = {
             'model': model or 'vertex_ai/text-embedding-004',
             'input': input,
@@ -198,7 +191,6 @@ class CortexLLMClient:
         }
         
         try:
-            # Use requests.post directly (matching your working code)
             embeddings_response = requests.post(
                 embedding_url,
                 json=embeddings_payload,
@@ -210,7 +202,6 @@ class CortexLLMClient:
             embeddings_response.raise_for_status()
             embedding_data = embeddings_response.json()
             
-            # Create OpenAI-compatible response
             return self._create_embedding_response(embedding_data)
             
         except Exception as e:
@@ -234,7 +225,6 @@ class CortexLLMClient:
                 self.model = data.get("model", "vertex_ai/text-embedding-004")
                 self.usage = data.get("usage", {})
                 
-                # Parse embeddings from Cortex response
                 if "data" in data:
                     self.data = [Embedding(item) for item in data["data"]]
                 else:
@@ -250,22 +240,20 @@ class CortexLLMClient:
                 self.parent = parent
             
             def create(self, model: str, input: Union[str, List[str]], **kwargs):
-                """OpenAI-style .create() method"""
-                return self.parent._call_embeddings(model, input)
-            
-            def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-                """Alternative method name"""
                 return self.parent._call_embeddings(model, input)
         
         return EmbeddingsAPI(self)
 
 
 class AsyncCortexLLMClient:
-    """Async wrapper for Cortex API using ThreadPoolExecutor"""
+    """
+    Async wrapper - CRITICAL FIX
+    Instead of using ThreadPoolExecutor (which requires serialization),
+    we just call the sync client directly but wrap it as a coroutine
+    """
     
     def __init__(self):
         self.sync_client = CortexLLMClient()
-        self.executor = ThreadPoolExecutor(max_workers=10)
         
         # Copy attributes for OpenAI SDK compatibility
         self.base_url = self.sync_client.base_url
@@ -276,37 +264,6 @@ class AsyncCortexLLMClient:
         self.timeout = None
         self.max_retries = 2
         self.default_headers = self.sync_client.headers
-    
-    async def _async_call(self, func, **kwargs):
-        """
-        Generic async wrapper - CRITICAL FIX
-        Pass kwargs as dict to avoid serialization issues
-        """
-        loop = asyncio.get_event_loop()
-        
-        def _call():
-            # Extract and clean kwargs to ensure they're JSON-serializable
-            clean_kwargs = {}
-            for key, value in kwargs.items():
-                if value is not None:
-                    # Convert any complex types to simple types
-                    if isinstance(value, (str, int, float, bool)):
-                        clean_kwargs[key] = value
-                    elif isinstance(value, dict):
-                        clean_kwargs[key] = value
-                    elif isinstance(value, list):
-                        clean_kwargs[key] = value
-                    else:
-                        # Try to convert to dict if possible
-                        try:
-                            clean_kwargs[key] = dict(value)
-                        except:
-                            clean_kwargs[key] = value
-            
-            return func(**clean_kwargs)
-        
-        result = await loop.run_in_executor(self.executor, _call)
-        return result
     
     @property
     def chat(self):
@@ -326,37 +283,22 @@ class AsyncCortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Async create method - FIXED to avoid serialization issues"""
-        
-        # Build clean kwargs dict
-        call_kwargs = {
-            "model": model or self.default_model,
-            "messages": messages or [],
-            "temperature": temperature if temperature is not None else 0,
-            "max_tokens": max_tokens or 1000,
-            "stream": stream or False,
-        }
-        
-        # Handle response_format carefully - convert to plain dict if needed
-        if response_format is not None:
-            if isinstance(response_format, dict):
-                call_kwargs["response_format"] = response_format
-            else:
-                # Try to convert Pydantic/other types to dict
-                try:
-                    call_kwargs["response_format"] = dict(response_format)
-                except:
-                    call_kwargs["response_format"] = {"type": "json_object"} if response_format else None
-        
-        # Merge any additional kwargs
-        call_kwargs.update(kwargs)
-        
-        # Call with clean kwargs
-        result = await self._async_call(
-            self.sync_client._call_chat_completion,
-            **call_kwargs
+        """
+        Async create method - NO ThreadPoolExecutor!
+        Just call sync method directly and return as coroutine
+        """
+        # Call the sync client directly - no serialization needed!
+        result = self.sync_client._call_chat_completion(
+            model=model or self.default_model,
+            messages=messages or [],
+            temperature=temperature if temperature is not None else 0,
+            max_tokens=max_tokens or 1000,
+            response_format=response_format,
+            stream=stream or False,
+            **kwargs
         )
         
+        # Return immediately - we're already async
         return result
     
     @property
@@ -367,32 +309,15 @@ class AsyncCortexLLMClient:
                 self.parent = parent
             
             async def create(self, model: str, input: Union[str, List[str]], **kwargs):
-                """Async version of embeddings.create()"""
-                return await self.parent._async_call(
-                    self.parent.sync_client._call_embeddings,
-                    model=model,
-                    input=input
-                )
-            
-            async def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
-                """Alternative async method"""
-                return await self.parent._async_call(
-                    self.parent.sync_client._call_embeddings,
-                    model=model,
-                    input=input
-                )
+                # Call sync method directly - no serialization!
+                return self.parent.sync_client._call_embeddings(model, input)
         
         return AsyncEmbeddingsAPI(self)
     
     def __getattr__(self, name):
         """Fallback for unexpected attributes"""
         if hasattr(self.sync_client, name):
-            attr = getattr(self.sync_client, name)
-            if callable(attr):
-                async def async_wrapper(*args, **kwargs):
-                    return await self._async_call(attr, **kwargs)
-                return async_wrapper
-            return attr
+            return getattr(self.sync_client, name)
         
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
