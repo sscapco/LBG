@@ -5,6 +5,36 @@ import requests
 import constants
 
 
+def deep_clean_for_json(obj):
+    """
+    Aggressively clean any object to make it JSON-serializable
+    This removes all Pydantic types, Omit types, etc.
+    """
+    if obj is None:
+        return None
+    
+    # Handle Pydantic models
+    if hasattr(obj, 'model_dump'):
+        obj = obj.model_dump()
+    elif hasattr(obj, 'dict'):
+        obj = obj.dict()
+    
+    # Handle dictionaries
+    if isinstance(obj, dict):
+        return {str(k): deep_clean_for_json(v) for k, v in obj.items()}
+    
+    # Handle lists
+    if isinstance(obj, (list, tuple)):
+        return [deep_clean_for_json(item) for item in obj]
+    
+    # Handle basic types
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    
+    # For anything else, convert to string
+    return str(obj)
+
+
 class CortexLLMClient:
     """Synchronous wrapper for Cortex API that mimics OpenAI client interface"""
     
@@ -24,13 +54,11 @@ class CortexLLMClient:
         
         self.default_model = "vertex_ai/gemini-2.5-flash"
         
-        # OpenAI SDK compatibility attributes
         self.api_key = "cortex-placeholder-key"
         self.organization = None
         self.base_url_attr = self.base_url
     
     def __getstate__(self):
-        """Make client pickle-safe for serialization"""
         return {
             'base_url': self.base_url,
             'default_model': self.default_model,
@@ -39,7 +67,6 @@ class CortexLLMClient:
         }
     
     def __setstate__(self, state):
-        """Restore client from pickle"""
         self.__init__()
     
     def _call_chat_completion(
@@ -59,23 +86,22 @@ class CortexLLMClient:
         
         chat_url = f"{self.base_url}/chat/completions"
         
-        # Deep copy and clean messages
-        clean_messages = []
-        for msg in messages:
-            if hasattr(msg, 'model_dump'):
-                msg = msg.model_dump()
-            elif hasattr(msg, 'dict'):
-                msg = msg.dict()
-            
-            clean_messages.append({
+        # CRITICAL: Aggressively clean all inputs using deep_clean_for_json
+        clean_messages = deep_clean_for_json(messages)
+        
+        # Ensure messages have correct structure
+        final_messages = []
+        for msg in clean_messages:
+            final_messages.append({
                 "role": str(msg.get("role", "user")),
                 "content": str(msg.get("content", ""))
             })
         
+        # Build payload with clean data
         payload = {
-            "model": model or self.default_model,
-            "messages": clean_messages,
-            "max_tokens": max_tokens,
+            "model": str(model or self.default_model),
+            "messages": final_messages,
+            "max_tokens": int(max_tokens),
             "thinking": {
                 "type": "enabled",
                 "budget_tokens": 300
@@ -85,23 +111,32 @@ class CortexLLMClient:
         }
         
         if temperature is not None:
-            payload["temperature"] = temperature
+            payload["temperature"] = float(temperature)
         
+        # Handle response_format
         if response_format:
-            if hasattr(response_format, 'model_dump'):
-                response_format = response_format.model_dump()
-            elif hasattr(response_format, 'dict'):
-                response_format = response_format.dict()
-            
-            if isinstance(response_format, dict) and response_format.get("type") == "json_object":
-                if clean_messages and clean_messages[-1]["role"] == "user":
-                    clean_messages[-1]["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
-                    payload["messages"] = clean_messages
+            clean_format = deep_clean_for_json(response_format)
+            if isinstance(clean_format, dict) and clean_format.get("type") == "json_object":
+                if final_messages and final_messages[-1]["role"] == "user":
+                    final_messages[-1]["content"] += "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations."
+                    payload["messages"] = final_messages
+        
+        # CRITICAL: Test that payload is JSON-serializable BEFORE calling requests
+        try:
+            test_json = json.dumps(payload)
+        except TypeError as e:
+            print(f"❌ Payload is not JSON-serializable: {e}")
+            print(f"Payload type: {type(payload)}")
+            print(f"Messages type: {type(payload['messages'])}")
+            for i, msg in enumerate(payload['messages']):
+                print(f"  Message {i} type: {type(msg)}, content type: {type(msg.get('content'))}")
+            raise
         
         try:
+            # Now call requests.post with the clean payload
             response = requests.post(
                 chat_url, 
-                json=payload,
+                json=payload,  # This should now work!
                 headers=self.headers,
                 verify=False,
                 timeout=60
@@ -241,12 +276,16 @@ class CortexLLMClient:
             
             def create(self, model: str, input: Union[str, List[str]], **kwargs):
                 return self.parent._call_embeddings(model, input)
+            
+            # Add this method too for compatibility
+            def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
+                return self.parent._call_embeddings(model, input)
         
         return EmbeddingsAPI(self)
 
 
 class AsyncCortexLLMClient:
-    """Async wrapper - pickle-safe"""
+    """Async wrapper"""
     
     def __init__(self):
         self.sync_client = CortexLLMClient()
@@ -261,7 +300,6 @@ class AsyncCortexLLMClient:
         self.default_headers = self.sync_client.headers
     
     def __getstate__(self):
-        """Make async client pickle-safe - CRITICAL for Agents SDK"""
         return {
             'base_url': self.base_url,
             'default_model': self.default_model,
@@ -270,7 +308,6 @@ class AsyncCortexLLMClient:
         }
     
     def __setstate__(self, state):
-        """Restore async client from pickle"""
         self.__init__()
     
     @property
@@ -291,7 +328,6 @@ class AsyncCortexLLMClient:
         response_format: Optional[Dict] = None,
         **kwargs
     ):
-        """Async create - calls sync directly"""
         result = self.sync_client._call_chat_completion(
             model=model or self.default_model,
             messages=messages or [],
@@ -311,6 +347,10 @@ class AsyncCortexLLMClient:
                 self.parent = parent
             
             async def create(self, model: str, input: Union[str, List[str]], **kwargs):
+                return self.parent.sync_client._call_embeddings(model, input)
+            
+            # Add this too
+            async def create_embedding(self, model: str, input: Union[str, List[str]], **kwargs):
                 return self.parent.sync_client._call_embeddings(model, input)
         
         return AsyncEmbeddingsAPI(self)
