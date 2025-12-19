@@ -78,31 +78,28 @@ def _generate_disambiguation_response(state: GovernanceState) -> str:
     for step_id in candidates[:3]:  # Top 3
         record = governance_data.get_step_record(step_id)
         if record:
-            candidate_details.append(record)
+            candidate_details.append({
+                "id": record["id"],
+                "name": record["name"],
+                "purpose": record["purpose"]
+            })
     
-    # Build prompt for LLM to create disambiguation message
-    prompt = f"""The user asked: "{state.get('user_message')}"
-
-I found multiple possible steps they might be referring to:
-
-{json.dumps(candidate_details, indent=2)}
-
-Create a friendly, concise response that:
-1. Acknowledges their question
-2. Lists the matching steps with brief descriptions
-3. Asks them to clarify which one they meant
-
-Keep it conversational and helpful. Use bullet points for the step list."""
+    # Build response showing candidates
+    response_parts = [
+        f"I found {len(candidate_details)} steps that might match your question:\n"
+    ]
     
-    messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
-        messages,
-        max_tokens=800,
-        temperature=0.3,
-        thinking_enabled=False
+    for i, candidate in enumerate(candidate_details, 1):
+        response_parts.append(
+            f"\n{i}. **{candidate['id']}: {candidate['name']}**"
+            f"\n   {candidate['purpose']}\n"
+        )
+    
+    response_parts.append(
+        "\nWhich of these were you asking about? Or could you clarify your question?"
     )
     
-    return response
+    return "".join(response_parts)
 
 
 def _generate_step_response(state: GovernanceState) -> str:
@@ -151,9 +148,10 @@ To use it, simply ask me to run it. For example:
     prompt = f"""The user asked: "{state.get('user_message')}"
 
 Current Step: {step_details['name']} (ID: {step_details['id']})
-Purpose: {step_details['purpose']}
 
-Full Description (use verbatim):
+**Purpose**: {step_details['purpose']}
+
+**What you need to do** (use verbatim as bullet points):
 {step_details['description']}
 
 {f"Next Steps: " + json.dumps(next_step_info, indent=2) if next_step_info else ""}
@@ -162,11 +160,12 @@ Full Description (use verbatim):
 
 Create a helpful response that:
 1. Clearly states the step ID and name
-2. Provides the EXACT description from above as bullet points (do not summarize)
-3. If next steps exist, briefly mention them
-4. If automation is available, include the automation section EXACTLY as shown above
+2. Explains the PURPOSE first (one line)
+3. Provides the EXACT description as bullet points (do not summarize or reword)
+4. If next steps exist, briefly mention them
+5. If automation is available, include the automation section EXACTLY as shown above
 
-Keep it clear and practical. Use bullet points for the description."""
+Keep it clear and practical."""
     
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
