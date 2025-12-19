@@ -6,6 +6,7 @@ from governance_data import (
     nodes_df, edges_df, get_step_record, map_text_to_step_id,
     step_index, ORDERED_STEP_IDS
 )
+from automation_registry2 import get_automation_info
 
 
 ######### Intent Classification #########
@@ -58,7 +59,7 @@ def classify_intent(user_message: str, previous_state: Optional[Dict] = None) ->
 def find_matching_steps(
     user_message: str,
     emb_threshold: float = 0.5,
-    max_candidates: int = 3
+    max_candidates: int = 5  # Increased from 3
 ) -> Tuple[List[Dict], str, float]:
     """
     Find steps matching the user's message
@@ -66,12 +67,46 @@ def find_matching_steps(
     Returns:
         (matched_steps, method, confidence)
     """
+    # Try direct matching first
     step_id, method, confidence = map_text_to_step_id(user_message, emb_threshold)
     
     if step_id:
         rec = get_step_record(step_id)
         if rec:
             return [rec], method, confidence
+    
+    # For ambiguous queries, find multiple matching steps using embeddings
+    from governance_data import STEP_EMBEDDINGS, cosine_similarity, cortex_client
+    
+    # Check for common ambiguous patterns
+    ambiguous_patterns = [
+        ("security", ["security", "e2e information security"]),
+        ("cloud", ["cloud", "e2e cloud"]),
+        ("architecture", ["architecture", "e2e architecture"]),
+        ("test", ["testing", "e2e testing"]),
+    ]
+    
+    # Check if this is an ambiguous query
+    msg_lower = user_message.lower()
+    for pattern, keywords in ambiguous_patterns:
+        if pattern in msg_lower:
+            # Find all steps matching these keywords
+            candidates = []
+            query_emb = cortex_client.get_embedding(user_message)
+            
+            for sid, data in STEP_EMBEDDINGS.items():
+                sim = cosine_similarity(query_emb, data["embedding"])
+                if sim >= (emb_threshold - 0.1):  # Lower threshold for ambiguous queries
+                    rec = get_step_record(sid)
+                    if rec:
+                        candidates.append((rec, sim))
+            
+            if candidates:
+                # Sort by similarity and return top candidates
+                candidates.sort(key=lambda x: x[1], reverse=True)
+                matched = [c[0] for c in candidates[:max_candidates]]
+                avg_conf = sum(c[1] for c in candidates[:max_candidates]) / len(matched)
+                return matched, "embedding_multi_match", avg_conf
     
     return [], method, confidence
 
@@ -105,9 +140,11 @@ def find_previous_steps(current_step_id: str) -> List[str]:
 
 def needs_disambiguation_check(candidates: List[Dict], confidence: float) -> bool:
     """Check if we need to ask user to disambiguate between candidates"""
-    if len(candidates) > 1:
+    # If we found multiple candidates with good confidence, show them all
+    if len(candidates) > 1 and confidence > 0.4:
         return True
-    if len(candidates) == 1 and confidence < 0.7:
+    # If single candidate but low confidence, ask for clarification
+    if len(candidates) == 1 and confidence < 0.6:
         return True
     return False
 
@@ -234,41 +271,72 @@ def generate_llm_response(
     next_steps: List[Dict] = None,
     candidate_steps: List[Dict] = None
 ) -> str:
-    """Generate natural language response using LLM"""
+    """
+    Generate natural language response
     
-    system_prompt = """You are a helpful, practical data governance assistant.
+    For single-step queries: Return exact description from Excel
+    For disambiguation: Present all options with exact descriptions
+    For automation: Include what it does and how to use it
+    """
+    
+    # For "what's next" queries - return exact next step details
+    if "next" in user_message.lower() and next_steps:
+        if len(next_steps) == 1:
+            step = next_steps[0]
+            response = f"The next step is **{step['id']}: {step['name']}**.\n\n"
+            response += f"**Purpose:** {step['purpose']}\n\n"
+            response += f"**Description:**\n{step['description']}"
+            
+            # Add automation info if available
+            if step.get('automatable') and step.get('automation_step'):
+                auto_info = get_automation_info(step['automation_step'])
+                if auto_info:
+                    response += f"\n\n🤖 **Automation Available:** {auto_info['display_name']}\n"
+                    response += f"{auto_info['description']}\n"
+                    response += f"To use it, ask me to run the automation with the required parameters."
+            
+            return response
+        else:
+            # Multiple next steps
+            response = "There are multiple possible next steps:\n\n"
+            for step in next_steps:
+                response += f"**{step['id']}: {step['name']}**\n"
+                response += f"{step['purpose']}\n\n"
+            response += "Which would you like to know more about?"
+            return response
+    
+    # For disambiguation - show all candidates with full details
+    if needs_disambiguation and candidate_steps:
+        response = "I found multiple steps that might match. Here are the options:\n\n"
+        for step in candidate_steps:
+            response += f"**{step['id']}: {step['name']}**\n"
+            response += f"**Purpose:** {step['purpose']}\n"
+            response += f"**Description:**\n{step['description']}\n\n"
+        response += "Which one are you asking about?"
+        return response
+    
+    # For specific step queries - return exact description
+    if focus_step:
+        response = f"**{focus_step['id']}: {focus_step['name']}**\n\n"
+        response += f"**Purpose:** {focus_step['purpose']}\n\n"
+        response += f"**Description:**\n{focus_step['description']}"
+        
+        # Add automation info if available
+        if focus_step.get('automatable') and focus_step.get('automation_step'):
+            auto_info = get_automation_info(focus_step['automation_step'])
+            if auto_info:
+                response += f"\n\n🤖 **Automation Available:** {auto_info['display_name']}\n"
+                response += f"{auto_info['description']}\n"
+                response += f"To use it, you can say: 'Run {auto_info['display_name'].lower()} for [your parameters]'"
+        
+        return response
+    
+    # Fallback to LLM for complex queries
+    system_prompt = """You are a data governance assistant. Answer the user's question based on the context provided.
+    
+Be direct and helpful. If describing steps, use the exact descriptions provided in the context."""
 
-Your job is to help users navigate governance workflows by:
-- Answering their specific question directly and concisely
-- Providing step details (purpose + description) ONLY when relevant to the question
-- When multiple steps could apply, present options with details
-- Being focused and practical
-
-CRITICAL RULES:
-1. Answer the ACTUAL QUESTION - don't explain things they didn't ask about
-2. If they ask "what's next", ONLY describe the next step (not current or previous steps)
-3. If they need to choose between options, present EACH option clearly
-4. Keep responses focused and actionable - no unnecessary background
-
-Keep your responses:
-- Direct and focused on their question
-- Complete when describing a step (include purpose + description)
-- Concise - don't explain steps they didn't ask about"""
-
-    response_prompt = f"""Based on this workflow context, respond to the user's question.
-
-{context}
-
-Instructions:
-- Answer their SPECIFIC question - don't over-explain
-- If they ask "what's next", focus ONLY on the next step(s)
-- If disambiguation needed, present the options clearly
-- If automation available for the step they're asking about, mention it
-- Be concise but complete for what they actually asked
-
-User's Question: {user_message}
-
-Your Response:"""
+    response_prompt = f"""Context:\n{context}\n\nUser Question: {user_message}\n\nProvide a helpful answer:"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -278,7 +346,7 @@ Your Response:"""
     answer = cortex_client.chat_completion(
         messages=messages,
         temperature=0,
-        max_tokens=1000  # Reduced from 1500 for more concise responses
+        max_tokens=1000
     )
     
     return answer
