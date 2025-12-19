@@ -1,4 +1,6 @@
-llm_provider: gemini  # Changed from azure_openai
-embedding_provider: gemini  # Changed from azure_openai
+llm_provider: cortex
+llm_model: vertex_ai/gemini-2.5-flash
+embedding_provider: cortex
+embedding_model: vertex_ai/text-embedding-004
 vector_store: lancedb
 store_path: ./gov_db

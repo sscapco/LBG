@@ -2,3 +2,4 @@ graveyard/
 .env
 .venv/
 .venv
+openai_version/

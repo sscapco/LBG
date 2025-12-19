@@ -1,43 +1,51 @@
-"""
-Handler for automation tools using Gemini API directly
-
-This is a modified version of automation_tools/handler.py that uses
-the Gemini API instead of the original LLM setup.
-
-Place this in your automation_tools directory as handler.py OR
-use the gemini_llm_adapter.py to patch the original handler.
-"""
-
 import re
 import os
 import json
+from automation_tools.config import Settings
+from automation_tools.llms import get_llm
 from typing import Any, Dict, Optional, List
-from cortex_connection import cortex_client
-
 
 def validate_dp_name(name: str, max_len: int = 75) -> dict:
     """
-    Validate a Data Product name using ONLY the universal non-LLM rules
-    (Same as original - no LLM calls here)
+    Validate a Data Product name using ONLY the universal non-LLM rules:
+      1) Max length <= max_len (default 75)
+      2) Allowed characters: A-Z, a-z, 0-9, and '.' only
+      3) Separator hygiene: no leading/trailing dots, no consecutive '..'
+      4) Case style: each non-ID token must be UpperCamelCase
+      5) ID shape (when a token is an ID): must match ^[A-Z]{2}\\d{5}$
+
+    Returns a dict:
+      {
+        "valid": bool,
+        "errors": [str, ...],
+        "tokens": [str, ...]
+      }
+
+    Notes:
+      - This function is category-agnostic (ODP/FDP/CDP checks are NOT applied here).
+      - No acronym exceptions are made (LLM can handle acronym advice separately).
     """
-    _ALLOWED_RE = re.compile(r'^[A-Za-z0-9.]+$')
-    _ID_RE = re.compile(r'^[A-Z]{2}\d{5}$')
-    _CAMEL_RE = re.compile(r'^[A-Z][A-Za-z0-9]*$')
-    
+    # Precompiled regexes (universal rules)
+    _ALLOWED_RE = re.compile(r'^[A-Za-z0-9.]+$')       # only letters, digits, and dots
+    _ID_RE      = re.compile(r'^[A-Z]{2}\d{5}$')       # ServiceNow App ID: e.g., AL18725
+    _CAMEL_RE   = re.compile(r'^[A-Z][A-Za-z0-9]*$')   # simple UpperCamelCase: starts capital, then alnum
     if name is None:
         return {"valid": False, "errors": ["Name is required."], "tokens": []}
 
     s = name.strip()
     errors = []
 
+    # 1) Max length
     if len(s) == 0:
         errors.append("Name must not be empty.")
     elif len(s) > max_len:
         errors.append(f"Name exceeds max length of {max_len} characters (got {len(s)}).")
 
+    # 2) Allowed characters
     if not _ALLOWED_RE.fullmatch(s):
         errors.append("Only letters, digits, and '.' are allowed.")
 
+    # 3) Separator hygiene
     if s.startswith(".") or s.endswith("."):
         errors.append("No leading or trailing '.' separators.")
     if ".." in s:
@@ -45,93 +53,77 @@ def validate_dp_name(name: str, max_len: int = 75) -> dict:
 
     tokens = [t for t in s.split(".") if t != ""]
 
+    # 4) & 5) Per-token checks
     for i, tok in enumerate(tokens, start=1):
         if _ID_RE.fullmatch(tok):
+            # Token is an ID; that's fine (no CamelCase check).
             continue
+        # Non-ID tokens must be UpperCamelCase
         if not _CAMEL_RE.fullmatch(tok):
             errors.append(f"Token {i} ('{tok}') must be UpperCamelCase or match the ID pattern AA99999.")
 
     return {"valid": len(errors) == 0, "errors": errors, "tokens": tokens}
 
 
+# agents- LLM review universal checks
 def _first_json(text: str):
-    """Extract first JSON object from text"""
     try:
         return json.loads(text)
     except Exception:
         m = re.search(r'\{.*\}', text, flags=re.DOTALL)
         return json.loads(m.group(0)) if m else None
 
-
 def _camel_split(s: str) -> list[str]:
-    """Split camelCase into words"""
     return [p for p in re.findall(r'[A-Z]+(?=[A-Z][a-z0-9]|$)|[A-Z]?[a-z0-9]+', s) if p]
 
-
-def _run_llm_gemini(prompt: str, temperature: float = 0.0, max_tokens: int = 500) -> Dict[str, Any]:
+def llm_review_name(
+    name: str,
+    max_len: int = 75              # optional: fed into the prompt
+) -> dict:
     """
-    Run LLM using Gemini API
-    
-    Args:
-        prompt: The prompt to send
-        temperature: Sampling temperature
-        max_tokens: Maximum tokens
-        
-    Returns:
-        Parsed JSON response
+    Linguistic review via LLM (acronyms, ambiguity, plurality, tense, readability).
+    - Mandatory input: name (str)
+    - If llm is None and you pass settings, you can build your adapter inside.
+    - Returns a structured dict ready to combine with the deterministic result.
     """
-    messages = [{"role": "user", "content": prompt}]
-    
-    try:
-        response = cortex_client.chat_completion(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            thinking_enabled=False
-        )
-        return _first_json(response) or {}
-    except Exception as e:
-        print(f"LLM error: {e}")
-        return {}
-
-
-def llm_review_name(name: str, max_len: int = 75) -> dict:
-    """
-    Linguistic review via LLM using Gemini
-    """
-    _ID_RE = re.compile(r'^[A-Z]{2}\d{5}$')
+    # Derive tokens & token types internally (keep interface minimal)
+    _ID_RE = re.compile(r'^[A-Z]{2}\d{5}$')  # ServiceNow App ID (e.g., AL18725)
     tokens = [t for t in name.split(".") if t]
     token_types = ["id" if _ID_RE.fullmatch(t) else "name" for t in tokens]
     sub_tokens = [_camel_split(t) if tt=="name" else [t] for t, tt in zip(tokens, token_types)]
 
     payload = {
-        "name": name,
-        "tokens": tokens,
-        "token_types": token_types,
-        "sub_tokens": sub_tokens,
-        "issues_from_rules": []
+    "name": name,
+    "tokens": tokens,
+    "token_types": token_types,
+    "sub_tokens": sub_tokens,      # ← new
+    "issues_from_rules": []
     }
 
     # Load prompt template
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "name_checker.txt")
     with open(prompt_path, "r", encoding="utf-8") as f:
         template = f.read()
-    
     prompt = (
         template
         .replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False))
         .replace("{max_len}", str(max_len))
     )
-    
-    # Use Gemini
-    data = _run_llm_gemini(prompt, temperature=0, max_tokens=400)
+    settings = Settings()
+    # Build LLM if only settings provided (optional)
+     # or: from adapters.llm import get_llm
+    llm = get_llm(settings)
+    # Run LLM
+    raw = llm.generate(prompt, temperature=0, max_tokens=400)
+    data = _first_json(raw) or {}
 
     suggested = data.get("suggested_name", name)
+    # Guardrails (lightweight): keep token order & IDs unchanged
     s_toks = [t for t in suggested.split(".") if t]
     if len(s_toks) == len(tokens):
         for i, ttype in enumerate(token_types):
             if ttype == "id" and s_toks[i] != tokens[i]:
-                suggested = name
+                suggested = name  # revert if an ID was altered
                 break
     else:
         suggested = name
@@ -153,10 +145,8 @@ def llm_review_name(name: str, max_len: int = 75) -> dict:
     }
 
 
-# Import remaining functions from your original handler.py
-# These use the same helper functions defined above
 
-_ID_RE = re.compile(r'^[A-Z]{2}\d{5}$')
+_ID_RE = re.compile(r'^[A-Z]{2}\d{5}$')  # e.g., AL18725
 
 def _tok(name: str) -> List[str]:
     return [t for t in (name or "").split(".") if t]
@@ -164,132 +154,11 @@ def _tok(name: str) -> List[str]:
 def _add(checks: List[Dict[str, Any]], rule: str, status: str, severity: str, target: str, detail: str):
     checks.append({"rule": rule, "status": status, "severity": severity, "target": target, "detail": detail})
 
-# ... (include all the validation functions from original handler.py - they don't use LLM)
-# validate_odp_nonllm, validate_fdp_nonllm, validate_cdp_nonllm, etc.
-
-# For brevity, I'll show the LLM check functions that need to use Gemini:
-
-def _load_prompt(fname: str) -> str:
-    p = os.path.join(os.path.dirname(__file__), "prompts", fname)
-    with open(p, "r", encoding="utf-8") as f:
-        return f.read()
-
-def _build_llm_payload(name: str, max_len: int = 75) -> Dict[str, Any]:
-    tokens = [t for t in (name or "").split(".") if t]
-    token_types = ["id" if _ID_RE.fullmatch(t) else "name" for t in tokens]
-    sub_tokens = [_camel_split(t) if tt == "name" else [t] for t, tt in zip(tokens, token_types)]
-    return {
-        "name": name,
-        "tokens": tokens,
-        "token_types": token_types,
-        "sub_tokens": sub_tokens,
-        "issues_from_rules": [],
-        "max_len": max_len,
-    }
-
-def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
-    tokens = payload["tokens"]
-    token_types = payload["token_types"]
-
-    suggested = data.get("suggested_name", name)
-    s_toks = [t for t in suggested.split(".") if t]
-    
-    if len(s_toks) != len(tokens) or any(
-        tt == "id" and s_toks[i] != tokens[i] for i, tt in enumerate(token_types)
-    ):
-        suggested = name
-
-    issues = list(data.get("issues") or [])
-    token_reviews = data.get("token_reviews") or []
-    issue_keys = {(i.get("type"), i.get("token")) for i in issues if isinstance(i, dict)}
-
-    for tr in token_reviews:
-        tok = tr.get("raw")
-        note = tr.get("note", "")
-        for lab in tr.get("labels") or []:
-            key = (lab, tok)
-            if key not in issue_keys:
-                issues.append({"type": lab, "token": tok, "note": note})
-                issue_keys.add(key)
-
-    for ed in data.get("edits") or []:
-        idx = ed.get("index")
-        reason = ed.get("reason")
-        tok_for_edit = tokens[idx] if isinstance(idx, int) and 0 <= idx < len(tokens) else ed.get("from")
-        key = (reason, tok_for_edit)
-        if reason and tok_for_edit and key not in issue_keys:
-            issues.append({"type": reason, "token": tok_for_edit, "note": "Mirrored from edit reason"})
-            issue_keys.add(key)
-
-    data["issues"] = issues
-    expl = (data.get("llm_explnation") or "").strip()
-    verdict = "suggest_changes" if suggested != name else "no_changes"
-    return {
-        "input_name": name,
-        "tokens": tokens,
-        "token_types": token_types,
-        "suggested_name": suggested,
-        "edits": data.get("edits", []),
-        "issues": data.get("issues", []),
-        "token_reviews": data.get("token_reviews", []),
-        "notes": data.get("notes", ""),
-        "confidence": data.get("confidence", None),
-        "verdict": verdict,
-        "suggestion": suggested if verdict == "suggest_changes" else None,
-        "llm_explnation": expl,
-    }
-
-
-def odp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
-    """ODP-specific LLM check using Gemini"""
-    payload = _build_llm_payload(name, max_len=max_len)
-    tpl = _load_prompt("name_checker_odp.txt")
-    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
-    data = _run_llm_gemini(prompt, temperature=0.0, max_tokens=500)
-    return _guard_llm_suggestion(name, payload, data)
-
-def fdp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
-    """FDP-specific LLM check using Gemini"""
-    payload = _build_llm_payload(name, max_len=max_len)
-    tpl = _load_prompt("name_checker_fdp.txt")
-    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
-    data = _run_llm_gemini(prompt, temperature=0.0, max_tokens=500)
-    return _guard_llm_suggestion(name, payload, data)
-
-def cdp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
-    """CDP-specific LLM check using Gemini"""
-    payload = _build_llm_payload(name, max_len=max_len)
-    tpl = _load_prompt("name_checker_cdp.txt")
-    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
-    data = _run_llm_gemini(prompt, temperature=0.0, max_tokens=500)
-    return _guard_llm_suggestion(name, payload, data)
-
-def llm_check_by_type(name: str, dp_type: str, max_len: int = 75) -> Dict[str, Any]:
-    """Route to type-specific LLM check"""
-    t = (dp_type or "").upper()
-    if t == "ODP": return odp_llm_check(name, max_len=max_len)
-    if t == "FDP": return fdp_llm_check(name, max_len=max_len)
-    if t == "CDP": return cdp_llm_check(name, max_len=max_len)
-    return {
-        "input_name": name, "tokens": [t for t in (name or "").split(".") if t],
-        "token_types": [], "suggested_name": name, "edits": [], "issues": [
-            {"type":"system","token":dp_type,"note":"Unknown data product type"}
-        ],
-        "token_reviews": [], "notes": "", "confidence": None,
-        "verdict":"no_changes","suggestion": None
-    }
-
-
-# NOTE: Include all the other non-LLM functions from your original handler.py:
-# - validate_odp_nonllm
-# - validate_fdp_nonllm  
-# - validate_cdp_nonllm
-# - odp_connections_checks
-# - fdp_connections_checks
-# - cdp_connections_checks
-# - connections_checks_by_type
-# - check_name_both
-
+# -------------------------
+# ODP (Origin Data Product)
+# Grammar: AppID[.ChildAppID].BusinessName  (2–3 tokens)
+# Deterministic checks only: positions, ID shapes, counts.
+# -------------------------
 def validate_odp_nonllm(name: str) -> Dict[str, Any]:
     tokens = _tok(name)
     checks: List[Dict[str, Any]] = []
@@ -448,6 +317,131 @@ def validate_cdp_nonllm(name: str) -> Dict[str, Any]:
     return {"valid": valid, "components": components, "checks": checks, "notes": []}
 
 
+# -------------------------
+# Helpers shared by LLM checks
+# -------------------------
+def _load_prompt(fname: str) -> str:
+    p = os.path.join(os.path.dirname(__file__), "prompts", fname)
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()
+
+def _build_llm_payload(name: str, max_len: int = 75) -> Dict[str, Any]:
+    tokens = [t for t in (name or "").split(".") if t]
+    token_types = ["id" if _ID_RE.fullmatch(t) else "name" for t in tokens]
+    sub_tokens = [_camel_split(t) if tt == "name" else [t] for t, tt in zip(tokens, token_types)]
+    return {
+        "name": name,
+        "tokens": tokens,
+        "token_types": token_types,
+        "sub_tokens": sub_tokens,
+        "issues_from_rules": [],
+        "max_len": max_len,
+    }
+
+def _run_llm_with_prompt(prompt_text: str) -> Dict[str, Any]:
+    settings = Settings()
+    llm = get_llm(settings)
+    raw = llm.generate(prompt_text, temperature=0.0, max_tokens=500)
+    return _first_json(raw) or {}
+
+def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    tokens = payload["tokens"]
+    token_types = payload["token_types"]
+
+    suggested = data.get("suggested_name", name)
+    s_toks = [t for t in suggested.split(".") if t]
+    # hard guards: same token count; IDs unchanged
+    if len(s_toks) != len(tokens) or any(
+        tt == "id" and s_toks[i] != tokens[i] for i, tt in enumerate(token_types)
+    ):
+        suggested = name
+
+    # ---- MIRROR labels -> issues (and edits -> issues) ----
+    issues = list(data.get("issues") or [])
+    token_reviews = data.get("token_reviews") or []
+    issue_keys = {(i.get("type"), i.get("token")) for i in issues if isinstance(i, dict)}
+
+    # 1) token_reviews.labels -> issues[]
+    for tr in token_reviews:
+        tok = tr.get("raw")
+        note = tr.get("note", "")
+        for lab in tr.get("labels") or []:
+            key = (lab, tok)
+            if key not in issue_keys:
+                issues.append({"type": lab, "token": tok, "note": note})
+                issue_keys.add(key)
+
+    # 2) edits[].reason -> issues[] (ensure every edit has a matching issue)
+    for ed in data.get("edits") or []:
+        idx = ed.get("index")
+        reason = ed.get("reason")
+        tok_for_edit = tokens[idx] if isinstance(idx, int) and 0 <= idx < len(tokens) else ed.get("from")
+        key = (reason, tok_for_edit)
+        if reason and tok_for_edit and key not in issue_keys:
+            issues.append({"type": reason, "token": tok_for_edit, "note": "Mirrored from edit reason"})
+            issue_keys.add(key)
+
+    data["issues"] = issues
+    # ---- end mirror ----
+    expl = (data.get("llm_explnation") or "").strip()
+    verdict = "suggest_changes" if suggested != name else "no_changes"
+    return {
+        "input_name": name,
+        "tokens": tokens,
+        "token_types": token_types,
+        "suggested_name": suggested,
+        "edits": data.get("edits", []),
+        "issues": data.get("issues", []),
+        "token_reviews": data.get("token_reviews", []),
+        "notes": data.get("notes", ""),
+        "confidence": data.get("confidence", None),
+        "verdict": verdict,
+        "suggestion": suggested if verdict == "suggest_changes" else None,
+        "llm_explnation": expl,
+    }
+
+
+# -------------------------
+# LLM checks by DP type
+# -------------------------
+def odp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
+    payload = _build_llm_payload(name, max_len=max_len)
+    tpl = _load_prompt("name_checker_odp.txt")
+    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
+    data = _run_llm_with_prompt(prompt)
+    return _guard_llm_suggestion(name, payload, data)
+
+def fdp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
+    payload = _build_llm_payload(name, max_len=max_len)
+    tpl = _load_prompt("name_checker_fdp.txt")
+    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
+    data = _run_llm_with_prompt(prompt)
+    return _guard_llm_suggestion(name, payload, data)
+
+def cdp_llm_check(name: str, max_len: int = 75) -> Dict[str, Any]:
+    payload = _build_llm_payload(name, max_len=max_len)
+    tpl = _load_prompt("name_checker_cdp.txt")
+    prompt = tpl.replace("{payload_json_here}", json.dumps(payload, ensure_ascii=False)).replace("{max_len}", str(max_len))
+    data = _run_llm_with_prompt(prompt)
+    return _guard_llm_suggestion(name, payload, data)
+
+def llm_check_by_type(name: str, dp_type: str, max_len: int = 75) -> Dict[str, Any]:
+    t = (dp_type or "").upper()
+    if t == "ODP": return odp_llm_check(name, max_len=max_len)
+    if t == "FDP": return fdp_llm_check(name, max_len=max_len)
+    if t == "CDP": return cdp_llm_check(name, max_len=max_len)
+    return {
+        "input_name": name, "tokens": [t for t in (name or "").split(".") if t],
+        "token_types": [], "suggested_name": name, "edits": [], "issues": [
+            {"type":"system","token":dp_type,"note":"Unknown data product type"}
+        ],
+        "token_reviews": [], "notes": "", "confidence": None,
+        "verdict":"no_changes","suggestion": None
+    }
+
+# -------------------------
+# Connections (warnings-only stubs) by DP type
+# -------------------------
 def odp_connections_checks(components: Dict[str, Any]) -> Dict[str, Any]:
     checks = []
     app_id = components.get("application_id")
@@ -595,5 +589,3 @@ def check_name_both(name: str, dp_type: str, max_len: int = 75) -> Dict[str, Any
             "explanation": combined             # friendly one-liner for UI/chat
         }
     }
-
-

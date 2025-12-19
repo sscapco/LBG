@@ -1,77 +1,24 @@
+"""
+Main application entry point for Governance Q&A Pipeline
+"""
 import asyncio
-from governance_graph import run_governance_graph
-from session_manager import session_manager
-from typing import Optional
+from workflow import process_query, process_query_sync, clear_session
 
 
-async def process_governance_query(
-    user_message: str,
-    session_id: str = "default_session"
-) -> str:
+async def main_async():
     """
-    Process a governance query and return the answer
-    
-    Args:
-        user_message: User's query
-        session_id: Session identifier for tracking state across queries
-        
-    Returns:
-        Answer string
+    Async demo of the governance Q&A pipeline
     """
     print("\n" + "=" * 80)
-    print(f" GOVERNANCE QUERY (session: {session_id})")
-    print(f" {user_message}")
+    print("🏛️ GOVERNANCE Q&A PIPELINE - LANGGRAPH VERSION")
     print("=" * 80)
     
-    # Get previous state from session manager
-    previous_state = session_manager.get_session(session_id)
-    
-    # Run the governance graph
-    answer, updated_state = await run_governance_graph(
-        user_message=user_message,
-        session_id=session_id,
-        previous_state=previous_state
-    )
-    
-    # Update session
-    session_manager.update_session(session_id, updated_state)
-    
-    print("=" * 80 + "\n")
-    
-    return answer
-
-
-def process_governance_query_sync(
-    user_message: str,
-    session_id: str = "default_session"
-) -> str:
-    """
-    Synchronous version of process_governance_query for easier integration
-    """
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(
-        process_governance_query(user_message, session_id)
-    )
-
-
-######### Demo / Testing #########
-
-async def run_demo():
-    """Run demo queries to test the system"""
-    
-    print("\n" + "=" * 80)
-    print(" GOVERNANCE Q&A PIPELINE WITH LANGGRAPH + GEMINI")
-    print("=" * 80)
-    
+    # Demo conversations
     demos = [
         ("session_flow", "I'm working on the DOI form, can you remind me what to do?"),
-        ("session_flow", "Yes, can you run the naming check for me?"),
+        ("session_flow", "Can you run the naming validation for AL12345.CustomerData as ODP?"),
         ("session_new", "I think I need to log something for this new data thing—where do I start?"),
+        ("session_new", "Tell me more about S1"),
     ]
     
     for i, (sess, query) in enumerate(demos, 1):
@@ -79,82 +26,96 @@ async def run_demo():
         print(f"DEMO {i} (session: {sess})")
         print(f"{'=' * 80}\n")
         
-        response = await process_governance_query(query, session_id=sess)
-        print(f"\n ANSWER:\n{response}\n")
+        response = await process_query(query, session_id=sess)
+        print(f"\n💬 ANSWER:\n{response}\n")
         
         if i < len(demos):
-            print("\n Next demo...\n")
+            print("\n⏸️ Next demo...\n")
             await asyncio.sleep(1)
     
     print("\n" + "=" * 80)
-    print(" DEMOS COMPLETE")
+    print("✅ DEMOS COMPLETE")
     print("=" * 80)
 
 
-######### Interactive Mode #########
-
-async def interactive_mode():
+def main_sync():
     """
-    Run in interactive mode for testing
+    Synchronous demo of the governance Q&A pipeline
     """
     print("\n" + "=" * 80)
-    print(" GOVERNANCE Q&A - INTERACTIVE MODE")
-    print(" Type 'quit' to exit, 'clear' to clear session, 'sessions' to list")
-    print("=" * 80 + "\n")
+    print("🏛️ GOVERNANCE Q&A PIPELINE - LANGGRAPH VERSION")
+    print("=" * 80)
     
-    session_id = "interactive_session"
+    # Demo conversations
+    demos = [
+        ("session_flow", "I've finished my DPWG presentation and got endorsement from DPC. What should I do next?"),
+        ("session_flow", "Can you tell me what I need to do for the DOI step?"),
+        ("session_new", "Run the naming check. The name is AL12345.CustomerData and it's an ODP"),
+        ("session_new", "Do I need to do the security bits or the cloud checks—or are they the same thing?"),
+    ]
+    
+    for i, (sess, query) in enumerate(demos, 1):
+        print(f"\n{'=' * 80}")
+        print(f"DEMO {i} (session: {sess})")
+        print(f"{'=' * 80}\n")
+        
+        response = process_query_sync(query, session_id=sess)
+        print(f"\n💬 ANSWER:\n{response}\n")
+        
+        if i < len(demos):
+            print("\n⏸️ Next demo...\n")
+    
+    print("\n" + "=" * 80)
+    print("✅ DEMOS COMPLETE")
+    print("=" * 80)
+
+
+def interactive_mode():
+    """
+    Interactive mode for testing queries
+    """
+    print("\n" + "=" * 80)
+    print("🏛️ GOVERNANCE Q&A PIPELINE - INTERACTIVE MODE")
+    print("=" * 80)
+    print("\nType 'quit' or 'exit' to stop")
+    print("Type 'clear' to clear session\n")
+    
+    session_id = "interactive"
     
     while True:
         try:
-            user_input = input("\nYou: ").strip()
+            user_input = input("\n📝 Your query: ").strip()
             
             if not user_input:
                 continue
             
-            if user_input.lower() == "quit":
-                print("\nGoodbye! 👋")
+            if user_input.lower() in ["quit", "exit"]:
+                print("\n👋 Goodbye!")
                 break
             
             if user_input.lower() == "clear":
-                session_manager.clear_session(session_id)
-                print("✅ Session cleared!")
+                clear_session(session_id)
                 continue
             
-            if user_input.lower() == "sessions":
-                sessions = session_manager.list_sessions()
-                print("\nActive Sessions:")
-                for sid, info in sessions.items():
-                    print(f"  - {sid}: {info}")
-                continue
-            
-            # Process query
-            answer = await process_governance_query(user_input, session_id)
-            print(f"\nAssistant: {answer}")
+            response = process_query_sync(user_input, session_id=session_id)
+            print(f"\n💬 ANSWER:\n{response}\n")
             
         except KeyboardInterrupt:
-            print("\n\nGoodbye! 👋")
+            print("\n\n👋 Goodbye!")
             break
         except Exception as e:
-            print(f"\n❌ Error: {e}")
-
-
-######### Main Entry Point #########
-
-def main():
-    """Main entry point"""
-    import sys
-    
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "demo":
-            asyncio.run(run_demo())
-        elif sys.argv[1] == "interactive":
-            asyncio.run(interactive_mode())
-        else:
-            print("Usage: python main.py [demo|interactive]")
-    else:
-        # Default: run demo
-        asyncio.run(run_demo())
+            print(f"\n❌ Error: {e}\n")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Check for mode argument
+    mode = sys.argv[1] if len(sys.argv) > 1 else "sync"
+    
+    if mode == "async":
+        asyncio.run(main_async())
+    elif mode == "interactive":
+        interactive_mode()
+    else:
+        main_sync()

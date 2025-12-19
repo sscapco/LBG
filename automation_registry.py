@@ -1,12 +1,5 @@
-# This file is imported from your existing automation implementation
-# It should be located in the project root or a parent directory
-
 from typing import Dict, Callable, Any, Optional
 import json
-
-# Import Gemini adapter BEFORE importing handler to patch automation_tools
-import gemini_llm_adapter  # This patches automation_tools to use Gemini
-
 from automation_tools.handler import check_name_both
 
 
@@ -246,7 +239,7 @@ def format_automation_result_for_user(result: Dict[str, Any]) -> str:
     
     elif status == "error":
         message = result.get("message", "Unknown error")
-        return f"❌ Error: {message}"
+        return f"âŒ Error: {message}"
     
     elif status == "success":
         # Check if this is a name validation result
@@ -256,22 +249,22 @@ def format_automation_result_for_user(result: Dict[str, Any]) -> str:
             explanation = result.get("explanation", "")
             
             if verdict == "valid":
-                return f"✅ **Valid**: '{input_name}' passes all checks.\n\n{explanation}"
+                return f"âœ… **Valid**: '{input_name}' passes all checks.\n\n{explanation}"
             elif verdict == "needs_changes":
                 suggested = result.get("suggested_name", "")
                 return (
-                    f"⚠️ **Needs Changes**: '{input_name}'\n\n"
+                    f"âš ï¸ **Needs Changes**: '{input_name}'\n\n"
                     f"Suggested: '{suggested}'\n\n"
                     f"{explanation}"
                 )
             else:  # invalid
                 return (
-                    f"❌ **Invalid**: '{input_name}'\n\n"
+                    f"âŒ **Invalid**: '{input_name}'\n\n"
                     f"{explanation}"
                 )
         else:
             # Generic success message
             message = result.get("message", "Automation completed successfully")
-            return f"✅ {message}"
+            return f"âœ… {message}"
     
     return "Unexpected result format"
