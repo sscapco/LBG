@@ -42,29 +42,22 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
     Returns:
         Updated state with automation_result
     """
-    print("\n🤖 Checking for automation request...")
-    
     intent = state.get("intent")
     user_message = state.get("user_message", "")
     
     # Only process if automation intent
     if intent != "automation_request":
-        print("   No automation request detected")
         return state
     
     # Check if automation is available
     automation_step = state.get("automation_step")
     if not automation_step:
-        print("   ⚠️ No automation available for current step")
         state["answer"] = "I don't see an automation available for this step. Please specify which step you'd like to automate."
         return state
-    
-    print(f"   Automation available: {automation_step}")
     
     # Verify automation exists in registry
     auto_info = get_automation_info(automation_step)
     if not auto_info:
-        print(f"   ⚠️ Automation '{automation_step}' not found in registry")
         state["answer"] = f"Automation '{automation_step}' is not configured. Please contact support."
         return state
     
@@ -72,15 +65,12 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
     params_json = _extract_automation_params(user_message, automation_step)
     
     if params_json is None:
-        print("   ⚠️ Could not extract parameters from message")
         # Request parameters from user
         result = run_automation_step(automation_step, user_input=None)
         formatted = format_automation_result_for_user(result)
         state["answer"] = formatted
         state["automation_result"] = result
         return state
-    
-    print(f"   Extracted parameters: {params_json}")
     
     # Execute automation
     try:
@@ -90,10 +80,7 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
         state["automation_result"] = result
         state["answer"] = formatted
         
-        print(f"   ✅ Automation executed: {result.get('status')}")
-        
     except Exception as e:
-        print(f"   ❌ Automation execution error: {e}")
         state["answer"] = f"There was an error executing the automation: {str(e)}"
         state["automation_result"] = {"status": "error", "message": str(e)}
     
@@ -155,24 +142,35 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
     Returns:
         JSON string with {"name": str, "type": str} or None
     """
-    # Extract name (AL#####.Name pattern)
+    # Extract name (AL#####.Name pattern) - be more flexible with the pattern
     name_match = re.search(r'(AL\d+\.[A-Za-z0-9.]+)', message, re.IGNORECASE)
     if not name_match:
         return None
     
     name = name_match.group(1)
+    # Normalize the name
+    name = name.strip()
     
     # Extract type (ODP, FDP, or CDP)
     msg_lower = message.lower()
+    type_val = None
+    
     if "odp" in msg_lower:
         type_val = "ODP"
     elif "fdp" in msg_lower:
         type_val = "FDP"
     elif "cdp" in msg_lower:
         type_val = "CDP"
-    else:
+    
+    if not type_val:
         # Try to infer from previous context or default
         return None
     
-    # Return as JSON string
-    return json.dumps({"name": name, "type": type_val})
+    # Return as JSON string with proper escaping
+    params = {
+        "name": name,
+        "type": type_val,
+        "max_len": 75
+    }
+    
+    return json.dumps(params, ensure_ascii=False)

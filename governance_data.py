@@ -35,8 +35,6 @@ class GovernanceDataLoader:
     
     def _load_excel_data(self):
         """Load and normalize data from Excel file"""
-        print(f"📊 Loading governance data from {self.excel_path}...")
-        
         nodes_raw_df = pd.read_excel(self.excel_path, sheet_name="Nodes")
         edges_raw_df = pd.read_excel(self.excel_path, sheet_name="Edges")
         
@@ -93,8 +91,6 @@ class GovernanceDataLoader:
         
         # Canonical workflow order: row order in Nodes
         self.ordered_step_ids = list(self.nodes_df["Step_ID"])
-        
-        print(f"✅ Loaded {len(self.nodes_df)} steps and {len(self.edges_df)} edges")
     
     def _load_embeddings(self):
         """Load embeddings from cache or compute them"""
@@ -109,13 +105,11 @@ class GovernanceDataLoader:
                         "embedding": data["embedding"],
                         "text": data.get("text", ""),
                     }
-                print(f"✅ Loaded {len(self.step_embeddings)} step embeddings from cache")
                 return
             except Exception as e:
-                print(f"⚠️ Failed to load embeddings cache: {e}. Recomputing...")
                 self.step_embeddings = {}
         else:
-            print("ℹ️ No embeddings cache found. Computing step embeddings...")
+            pass
         
         # Compute embeddings
         for _, row in self.nodes_df.iterrows():
@@ -136,7 +130,6 @@ class GovernanceDataLoader:
         # Save cache
         with open(self.embed_cache_path, "w", encoding="utf-8") as f:
             json.dump(self.step_embeddings, f)
-        print(f"✅ Computed and cached embeddings for {len(self.step_embeddings)} steps")
     
     def _build_step_aliases(self):
         """Build alias mappings for deterministic step matching"""

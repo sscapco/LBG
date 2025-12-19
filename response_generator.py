@@ -25,11 +25,8 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     Returns:
         Updated state with 'answer' field populated
     """
-    print("\n✍️ Generating response...")
-    
     # If answer already set (e.g., by automation node), skip
     if state.get("answer"):
-        print("   Answer already generated")
         return state
     
     intent = state.get("intent")
@@ -54,7 +51,6 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     else:
         state["answer"] = _generate_fallback_response(state)
     
-    print("✅ Response generated")
     return state
 
 
@@ -101,7 +97,7 @@ Keep it conversational and helpful. Use bullet points for the step list."""
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
         messages,
-        max_tokens=500,
+        max_tokens=800,
         temperature=0.3,
         thinking_enabled=False
     )
@@ -127,41 +123,55 @@ def _generate_step_response(state: GovernanceState) -> str:
         if next_rec:
             next_step_info.append(next_rec)
     
+    # Build automation explanation if available
+    automation_info = ""
+    if automatable and automation_step:
+        # Get automation details from registry
+        from automation_registry import get_automation_info
+        auto_info = get_automation_info(automation_step)
+        if auto_info:
+            automation_info = f"""
+🤖 **Automation Available**: {auto_info.get('display_name', automation_step)}
+{auto_info.get('description', 'Automated helper for this step')}
+
+To use it, simply ask me to run it. For example:
+- "Run the {auto_info.get('display_name', 'automation').lower()}"
+- "Can you validate this for me?"
+"""
+    
     # Build context for LLM
     context = {
         "user_question": state.get("user_message"),
         "step": step_details,
         "next_steps": next_step_info,
-        "automatable": automatable,
-        "automation_key": automation_step,
+        "automation_info": automation_info,
         "intent": state.get("intent")
     }
     
     prompt = f"""The user asked: "{state.get('user_message')}"
 
-Here's the step information:
-
 Current Step: {step_details['name']} (ID: {step_details['id']})
 Purpose: {step_details['purpose']}
-Description: {step_details['description']}
+
+Full Description (use verbatim):
+{step_details['description']}
 
 {f"Next Steps: " + json.dumps(next_step_info, indent=2) if next_step_info else ""}
 
-{f"🤖 This step has automation available: {automation_step}" if automatable else ""}
+{automation_info}
 
-Create a helpful, conversational response that:
-1. Directly answers their question about this step
-2. Provides the key information (purpose, what to do)
-3. Mentions next steps if relevant
-4. If automation is available, briefly mention it at the end
-5. Keep it concise but complete (2-4 paragraphs max)
+Create a helpful response that:
+1. Clearly states the step ID and name
+2. Provides the EXACT description from above as bullet points (do not summarize)
+3. If next steps exist, briefly mention them
+4. If automation is available, include the automation section EXACTLY as shown above
 
-Use a natural, professional tone. No bullet points unless listing multiple items."""
+Keep it clear and practical. Use bullet points for the description."""
     
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
         messages,
-        max_tokens=900,
+        max_tokens=1200,
         temperature=0.0,
         thinking_enabled=False
     )
@@ -204,7 +214,7 @@ Use a natural, conversational tone."""
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
         messages,
-        max_tokens=700,
+        max_tokens=1000,
         temperature=0.0,
         thinking_enabled=False
     )

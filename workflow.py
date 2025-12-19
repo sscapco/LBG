@@ -138,11 +138,6 @@ def process_query_sync(
     Returns:
         Answer string for the user
     """
-    print("\n" + "=" * 80)
-    print(f"🎯 GOVERNANCE QUERY (session: {session_id})")
-    print(f"📝 {user_message}")
-    print("=" * 80)
-    
     # Retrieve previous session state
     previous_session = SESSION_STORE.get(session_id)
     previous_state = session_state_to_previous_state(previous_session)
@@ -160,10 +155,6 @@ def process_query_sync(
     # Update session storage
     session_state = state_to_session_state(final_state)
     SESSION_STORE[session_id] = session_state
-    
-    print("\n" + "=" * 80)
-    print("✅ Query processed successfully")
-    print("=" * 80 + "\n")
     
     return answer
 
