@@ -137,7 +137,7 @@ Now write your response:"""
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
         messages,
-        max_tokens=1200,  # Need more tokens for detailed explanations
+        max_tokens=2000,  # Increased for long step descriptions with multiple candidates
         temperature=0.0,
         thinking_enabled=False
     )
@@ -213,7 +213,7 @@ Keep it clear and practical."""
     messages = [{"role": "user", "content": prompt}]
     response = cortex.get_chat_response(
         messages,
-        max_tokens=1200,
+        max_tokens=1500,  # Increased for verbatim descriptions
         temperature=0.0,
         thinking_enabled=False
     )
