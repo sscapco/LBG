@@ -208,14 +208,24 @@ def _identify_steps(
         emb_threshold=0.30  # Lower threshold to match original (was 0.5)
     )
     
+    print(f"\nDEBUG _identify_steps:")
+    print(f"  Query: {user_message[:80]}...")
+    print(f"  Deterministic match: {focus_id}, method={method}, conf={confidence:.3f}")
+    
     if focus_id and confidence >= 0.85 and method != "embedding_match":
         # High confidence deterministic match (not embedding-based)
+        print(f"  → Using deterministic match (high confidence)")
         return focus_id, [focus_id], method, confidence
     
     # Always get top semantic candidates (like original)
-    candidates = _find_candidate_steps(user_message, top_k=3)
+    candidates = _find_candidate_steps(user_message, top_k=5)
+    
+    print(f"  Top 5 candidates from embedding search:")
+    for i, c in enumerate(candidates[:5], 1):
+        print(f"    {i}. {c['id']}: {c['score']:.3f}")
     
     if len(candidates) == 0:
+        print(f"  → No candidates found")
         return None, [], "no_match", 0.0
     
     # Check for disambiguation using original criteria:
@@ -223,20 +233,30 @@ def _identify_steps(
     if len(candidates) >= 2:
         c1, c2 = candidates[0], candidates[1]
         
+        print(f"  Disambiguation check:")
+        print(f"    c1: {c1['id']} score={c1['score']:.3f} (need >=0.40)")
+        print(f"    c2: {c2['id']} score={c2['score']:.3f} (need >=0.35)")
+        print(f"    diff: {c1['score'] - c2['score']:.3f} (need <=0.15)")
+        
         # Original disambiguation logic:
         # c1.score >= 0.40 AND c2.score >= 0.35 AND (c1.score - c2.score) <= 0.15
         if (c1["score"] >= 0.40 and 
             c2["score"] >= 0.35 and 
             (c1["score"] - c2["score"]) <= 0.15):
             # Ambiguous - return top 3 for disambiguation
-            candidate_ids = [c["id"] for c in candidates]
+            candidate_ids = [c["id"] for c in candidates[:3]]
+            print(f"  → DISAMBIGUATION triggered! Returning: {candidate_ids}")
             return c1["id"], candidate_ids, "embedding_match_ambiguous", c1["score"]
+        else:
+            print(f"  → No disambiguation (criteria not met)")
     
     # Single best match (original: score >= 0.30)
     if candidates[0]["score"] >= 0.30:
+        print(f"  → Single best match: {candidates[0]['id']}")
         return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
     
     # No good match
+    print(f"  → No good match (best score < 0.30)")
     return None, [], "no_match", 0.0
 
 
