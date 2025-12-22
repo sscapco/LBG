@@ -111,16 +111,35 @@ class GovernanceDataLoader:
         else:
             pass
         
-        # Compute embeddings
+        # Compute embeddings with enhanced text for better semantic matching
         for _, row in self.nodes_df.iterrows():
             sid = str(row["Step_ID"]).strip().upper()
-            text_parts = [
-                str(row["Stage_Name"]),
-                str(row["Step_Name"]),
-                str(row["Purpose"]),
-                str(row["Description"]),
-            ]
-            combined_text = ". ".join([p for p in text_parts if p and p != "nan"])
+            
+            # Build rich text for embedding - include multiple representations
+            text_parts = []
+            
+            # Core identification
+            text_parts.append(f"Step {sid}")
+            text_parts.append(str(row["Step_Name"]))
+            
+            # Purpose (key for matching user queries)
+            purpose = str(row["Purpose"])
+            if purpose and purpose != "nan":
+                text_parts.append(f"Purpose: {purpose}")
+            
+            # Description (contains detailed keywords)
+            description = str(row["Description"])
+            if description and description != "nan":
+                text_parts.append(description)
+            
+            # Stage context
+            stage = str(row["Stage_Name"])
+            if stage and stage != "nan":
+                text_parts.append(f"Stage: {stage}")
+            
+            # Combine with clear separators for better embedding
+            combined_text = " | ".join([p for p in text_parts if p])
+            
             emb = cortex.get_embedding(combined_text)
             self.step_embeddings[sid] = {
                 "embedding": emb,
