@@ -1,34 +1,20 @@
 """
 Main LangGraph workflow for governance Q&A pipeline
 """
+import logging
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 from state import GovernanceState, create_initial_state, state_to_session_state, session_state_to_previous_state
 from query_analyzer import analyze_query_node
-from automation_handler import automation_handler_node
 from response_generator import response_generator_node
+
+# Suppress LangGraph logging
+logging.getLogger("langgraph").setLevel(logging.ERROR)
+logging.getLogger("langchain").setLevel(logging.ERROR)
 
 
 # Session storage (in-memory for now, can be replaced with Redis/DB)
 SESSION_STORE: Dict[str, Dict[str, Any]] = {}
-
-
-def should_run_automation(state: GovernanceState) -> str:
-    """
-    Routing function: Determine if we should run automation
-    
-    Args:
-        state: Current state
-        
-    Returns:
-        "automation" if automation request, else "response"
-    """
-    intent = state.get("intent")
-    
-    if intent == "automation_request":
-        return "automation"
-    else:
-        return "response"
 
 
 def create_governance_graph() -> StateGraph:
@@ -37,10 +23,10 @@ def create_governance_graph() -> StateGraph:
     
     Workflow:
     1. analyze_query -> Classify intent and identify steps
-    2. Conditional:
-       - If automation_request -> automation_handler -> response_generator
-       - Else -> response_generator
+    2. response_generator -> Generate response
     3. END
+    
+    Note: Automation is handled separately in process_query_sync using Python regex
     
     Returns:
         Compiled StateGraph
@@ -50,26 +36,11 @@ def create_governance_graph() -> StateGraph:
     
     # Add nodes
     workflow.add_node("analyze_query", analyze_query_node)
-    workflow.add_node("automation_handler", automation_handler_node)
     workflow.add_node("response_generator", response_generator_node)
     
-    # Define edges
+    # Define edges - simplified flow
     workflow.set_entry_point("analyze_query")
-    
-    # Conditional routing after query analysis
-    workflow.add_conditional_edges(
-        "analyze_query",
-        should_run_automation,
-        {
-            "automation": "automation_handler",
-            "response": "response_generator"
-        }
-    )
-    
-    # Automation handler goes to response generator
-    workflow.add_edge("automation_handler", "response_generator")
-    
-    # Response generator ends the workflow
+    workflow.add_edge("analyze_query", "response_generator")
     workflow.add_edge("response_generator", END)
     
     # Compile graph
@@ -151,6 +122,30 @@ def process_query_sync(
     
     # Extract answer
     answer = final_state.get("answer", "I'm not sure how to respond to that.")
+    
+    # CRITICAL: Check for automation request using Python regex (NOT LLM intent)
+    # This matches the original behavior where automation detection is separate from intent
+    from automation_handler import detect_automation_request, _extract_automation_params
+    from automation_registry import run_automation_step, format_automation_result_for_user
+    
+    if detect_automation_request(user_message):
+        # Get automation step from final state
+        automation_step = final_state.get("automation_step")
+        
+        if automation_step:
+            # Extract parameters using Python regex
+            params_json = _extract_automation_params(user_message, automation_step)
+            
+            if params_json:
+                try:
+                    # Execute automation directly
+                    result = run_automation_step(automation_step, params_json)
+                    formatted_message = format_automation_result_for_user(result)
+                    
+                    # Override the answer with automation result
+                    answer = formatted_message
+                except Exception as e:
+                    answer = f"There was an error executing the automation: {str(e)}"
     
     # Update session storage
     session_state = state_to_session_state(final_state)
