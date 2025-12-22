@@ -29,11 +29,22 @@ DETECTION HEURISTICS (MANDATORY)
 - PLURALITY: If a NAME token ends with "s" and is not a common singular ending with "s"
   (examples: Status, Address, Process), label "plurality" and suggest the singular.
 - ACRONYM: ALL-CAPS short tokens (e.g., KYC, ESG, GX) → label "acronym" and suggest an expansion.
+- AMBIGUITY: Generic terms like "Data", "Record", "Info", "State", "Item" → label "ambiguity" and suggest a more specific alternative.
 
-EDIT POLICY
-- Minimal edits for plurality/tense (morphology only; do NOT swap synonyms for these).
+EDIT POLICY (CRITICAL - READ CAREFULLY)
+- For **plurality/tense issues**: Minimal morphological edits ONLY. Do NOT swap synonyms.
+  Example: "Customers" → "Customer" (remove 's' only, don't change to "Client")
+  
+- For **ambiguity/readability/acronym issues**: You MUST suggest a clearer alternative.
+  Example: "CustomerData" → "CustomerInfo" or "CustomerProfile" or "CustomerDetails"
+  Example: "RecordState" → "RecordStatus" or "RecordCondition"
+  Example: "KYCData" → "KnowYourCustomerInfo"
+  
+- IMPORTANT: If you detect ambiguity, you MUST provide a suggested_name with a fix, not just flag it.
+  Do not return the input name unchanged if you found ambiguity/readability/acronym issues.
+
 - Never change id tokens; keep token count and order identical.
-- If no issues, return the input name unchanged.
+- If no issues found, return the input name unchanged.
 
 CONNECTIONS (warnings only; NOT VERIFIED)
 - ServiceNow: ApplicationID (and ChildApplicationID, if any) should exist and be active/owned.
@@ -52,9 +63,9 @@ EXPLANATION (MANDATORY)
 - May note: "System IDs unchanged." If connection warnings exist, add "system checks not verified."
 - ≤ 45 words, no lists.
 
-OUTPUT — return ONLY this JSON object (no prose, no markdown):
+OUTPUT – return ONLY this JSON object (no prose, no markdown):
 {
-  "suggested_name": "string",  // same token count & order; id tokens EXACTLY unchanged
+  "suggested_name": "string",  // same token count & order; id tokens EXACTLY unchanged; MUST be different if ambiguity found
   "edits": [
     {"index": 2, "from": "Emissions", "to": "Emission", "reason": "plurality"}
   ],
@@ -73,4 +84,5 @@ OUTPUT — return ONLY this JSON object (no prose, no markdown):
 
 RULES
 - Report ALL applicable issues even if you make no edit.
+- If you find ambiguity/readability/acronym issues, you MUST provide a different suggested_name.
 - Do not output anything except the single JSON object.
