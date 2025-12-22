@@ -30,19 +30,30 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
         return state
     
     intent = state.get("intent")
+    needs_disambiguation = state.get("needs_disambiguation")
+    focus_step_id = state.get("focus_step_id")
+    
+    print(f"\nDEBUG response_generator:")
+    print(f"  Intent: {intent}")
+    print(f"  Needs disambiguation: {needs_disambiguation}")
+    print(f"  Focus step: {focus_step_id}")
     
     # Handle different intents
     if intent == "greeting":
+        print(f"  → Generating greeting")
         state["answer"] = _generate_greeting_response(state)
     
     elif intent == "automation_request":
         # Should have been handled by automation node
+        print(f"  → Generating automation prompt")
         state["answer"] = "I can help with automation. Please specify which step and provide the required parameters."
     
-    elif state.get("needs_disambiguation"):
+    elif needs_disambiguation:
+        print(f"  → Generating DISAMBIGUATION response")
         state["answer"] = _generate_disambiguation_response(state)
     
-    elif state.get("focus_step_id"):
+    elif focus_step_id:
+        print(f"  → Generating step response for {focus_step_id}")
         state["answer"] = _generate_step_response(state)
     
     elif intent == "ask_next_step":

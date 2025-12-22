@@ -25,16 +25,12 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
     Returns:
         Updated state with intent, focus_step_id, and candidate_step_ids
     """
-    print("\n🔍 Analyzing query...")
-    
     user_message = state["user_message"]
     previous_state = state.get("previous_state")
     
     # Step 1: Classify intent using LLM
     intent, intent_confidence = _classify_intent(user_message, previous_state)
     state["intent"] = intent
-    
-    print(f"   Intent: {intent} (confidence: {intent_confidence:.2f})")
     
     # Step 2: Identify steps based on intent
     if intent in ["ask_about_step", "ask_next_step", "ask_previous_step", 
@@ -46,16 +42,21 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
             intent
         )
         
+        print(f"\nDEBUG query_analyzer:")
+        print(f"  Intent: {intent}")
+        print(f"  Focus step: {focus_step_id}")
+        print(f"  Candidates: {candidates}")
+        print(f"  Match method: {method}")
+        print(f"  Confidence: {confidence}")
+        
         state["focus_step_id"] = focus_step_id
         state["candidate_step_ids"] = candidates
         state["match_method"] = method
         state["match_confidence"] = confidence
         
-        print(f"   Focus step: {focus_step_id or 'None'} (method: {method}, confidence: {confidence:.2f})")
-        
         if candidates and len(candidates) > 1:
+            print(f"  Setting needs_disambiguation = True (found {len(candidates)} candidates)")
             state["needs_disambiguation"] = True
-            print(f"   ⚠️ Multiple candidates: {candidates}")
         else:
             state["needs_disambiguation"] = False
         
@@ -79,9 +80,6 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
             if step_details and step_details.get("automatable"):
                 state["automatable_step_id"] = focus_step_id
                 state["automation_step"] = step_details.get("automation_step")
-                print(f"   🤖 Automation available: {state['automation_step']}")
-            
-            print(f"   Next steps: {next_step_ids}")
     
     elif intent == "ask_next_step" and previous_state:
         # Use anchor from previous state
@@ -103,7 +101,6 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
     elif intent == "greeting":
         state["needs_disambiguation"] = False
     
-    print("✅ Query analysis complete")
     return state
 
 
