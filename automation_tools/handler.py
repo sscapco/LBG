@@ -379,11 +379,16 @@ def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, An
     token_types = payload["token_types"]
 
     suggested = data.get("suggested_name", name)
+    print(f"\nDEBUG _guard_llm_suggestion:")
+    print(f"  Input name: {name}")
+    print(f"  LLM suggested_name: {suggested}")
+    
     s_toks = [t for t in suggested.split(".") if t]
     # hard guards: same token count; IDs unchanged
     if len(s_toks) != len(tokens) or any(
         tt == "id" and s_toks[i] != tokens[i] for i, tt in enumerate(token_types)
     ):
+        print(f"  REVERTING: Token mismatch detected")
         suggested = name
 
     # ---- MIRROR labels -> issues (and edits -> issues) ----
@@ -415,6 +420,12 @@ def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, An
     # ---- end mirror ----
     expl = (data.get("llm_explnation") or "").strip()
     verdict = "suggest_changes" if suggested != name else "no_changes"
+    
+    print(f"  Final suggested: {suggested}")
+    print(f"  Verdict: {verdict}")
+    print(f"  Issues count: {len(issues)}")
+    print(f"  Edits: {data.get('edits', [])}")
+    
     return {
         "input_name": name,
         "tokens": tokens,
