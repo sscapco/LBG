@@ -202,37 +202,42 @@ def _identify_steps(
     Returns:
         Tuple of (focus_step_id, candidate_step_ids, match_method, confidence)
     """
-    # Try deterministic matching first
-    focus_id, method, confidence = governance_data.map_text_to_step_id(user_message)
+    # Try deterministic matching first (ID, alias, substring)
+    focus_id, method, confidence = governance_data.map_text_to_step_id(
+        user_message, 
+        emb_threshold=0.30  # Lower threshold to match original (was 0.5)
+    )
     
-    if focus_id and confidence >= 0.85:
-        # High confidence single match
+    if focus_id and confidence >= 0.85 and method != "embedding_match":
+        # High confidence deterministic match (not embedding-based)
         return focus_id, [focus_id], method, confidence
     
-    # For lower confidence or no match, try embedding-based ranking
-    if confidence < 0.85:
-        candidates = _find_candidate_steps(user_message, top_k=5)
-        
-        if len(candidates) == 0:
-            return None, [], "no_match", 0.0
-        
-        elif len(candidates) == 1:
-            return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
-        
-        else:
-            # Multiple candidates - check if top candidate is significantly better
-            top_score = candidates[0]["score"]
-            second_score = candidates[1]["score"] if len(candidates) > 1 else 0.0
-            
-            if top_score > 0.8 and (top_score - second_score) > 0.15:
-                # Clear winner
-                return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", top_score
-            else:
-                # Return top 3 for disambiguation
-                candidate_ids = [c["id"] for c in candidates[:3]]
-                return candidates[0]["id"], candidate_ids, "embedding_match_ambiguous", top_score
+    # Always get top semantic candidates (like original)
+    candidates = _find_candidate_steps(user_message, top_k=3)
     
-    return focus_id, [focus_id] if focus_id else [], method, confidence
+    if len(candidates) == 0:
+        return None, [], "no_match", 0.0
+    
+    # Check for disambiguation using original criteria:
+    # Both candidates reasonably strong AND fairly close in score
+    if len(candidates) >= 2:
+        c1, c2 = candidates[0], candidates[1]
+        
+        # Original disambiguation logic:
+        # c1.score >= 0.40 AND c2.score >= 0.35 AND (c1.score - c2.score) <= 0.15
+        if (c1["score"] >= 0.40 and 
+            c2["score"] >= 0.35 and 
+            (c1["score"] - c2["score"]) <= 0.15):
+            # Ambiguous - return top 3 for disambiguation
+            candidate_ids = [c["id"] for c in candidates]
+            return c1["id"], candidate_ids, "embedding_match_ambiguous", c1["score"]
+    
+    # Single best match (original: score >= 0.30)
+    if candidates[0]["score"] >= 0.30:
+        return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
+    
+    # No good match
+    return None, [], "no_match", 0.0
 
 
 def _find_candidate_steps(query: str, top_k: int = 5) -> List[dict]:
@@ -259,5 +264,11 @@ def _find_candidate_steps(query: str, top_k: int = 5) -> List[dict]:
     
     # Sort by score descending
     scores.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Debug output
+    print(f"\nDEBUG _find_candidate_steps for query: '{query[:50]}...'")
+    print(f"Top {min(5, len(scores))} candidates:")
+    for i, candidate in enumerate(scores[:5], 1):
+        print(f"  {i}. {candidate['id']}: {candidate['score']:.3f}")
     
     return scores[:top_k]
