@@ -131,7 +131,7 @@ def llm_review_name(
      # or: from adapters.llm import get_llm
     llm = get_llm(settings)
     # Run LLM
-    raw = llm.generate(prompt, temperature=0, max_tokens=400)
+    raw = llm.generate(prompt, temperature=0.1, max_tokens=600)
     data = _first_json(raw) or {}
 
     suggested = data.get("suggested_name", name)
@@ -590,14 +590,24 @@ def check_name_both(name: str, dp_type: str, max_len: int = 75) -> Dict[str, Any
 
     # 5) Verdict + suggestion
     invalid = (not det.get("valid", False)) or (not type_res.get("valid", False))
+    
+    # Check if LLM found critical issues (ambiguity, plurality, tense, readability)
+    llm_critical_issues = [
+        i for i in (llm_dp.get("issues") or [])
+        if i.get("type") in ["ambiguity", "plurality", "tense", "readability", "acronym"]
+    ]
+    
     if invalid:
         verdict, scientific_name = "invalid", None
         suggestion = llm_dp.get("suggestion")
         edits = llm_dp.get("edits", [])
     else:
-        if llm_dp.get("suggestion"):
-            verdict, scientific_name = "needs_changes", llm_dp.get("suggested_name", name)
-            suggestion, edits = llm_dp.get("suggestion"), llm_dp.get("edits", [])
+        # Check both: does LLM have a suggestion OR critical issues?
+        if llm_dp.get("suggestion") or llm_critical_issues:
+            verdict = "needs_changes"
+            scientific_name = llm_dp.get("suggested_name", name)
+            suggestion = llm_dp.get("suggestion") or llm_dp.get("suggested_name")
+            edits = llm_dp.get("edits", [])
         else:
             verdict, scientific_name, suggestion, edits = "valid", name, None, []
 
