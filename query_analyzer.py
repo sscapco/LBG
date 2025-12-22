@@ -33,8 +33,11 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
     state["intent"] = intent
     
     # Step 2: Identify steps based on intent
+    # Note: We run step identification for clarification_needed too, because the user
+    # might be asking about steps in an ambiguous way (e.g., "security bits or cloud checks?")
     if intent in ["ask_about_step", "ask_next_step", "ask_previous_step", 
-                  "mark_complete", "mark_in_progress", "automation_request"]:
+                  "mark_complete", "mark_in_progress", "automation_request",
+                  "clarification_needed"]:  # Added clarification_needed!
         
         focus_step_id, candidates, method, confidence = _identify_steps(
             user_message, 
@@ -54,9 +57,12 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         state["match_method"] = method
         state["match_confidence"] = confidence
         
+        # If we found multiple candidates, this is disambiguation - regardless of intent!
         if candidates and len(candidates) > 1:
             print(f"  Setting needs_disambiguation = True (found {len(candidates)} candidates)")
             state["needs_disambiguation"] = True
+            # Override intent to make response generation clearer
+            state["intent"] = "ask_about_step"
         else:
             state["needs_disambiguation"] = False
         
