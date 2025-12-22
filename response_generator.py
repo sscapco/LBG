@@ -69,11 +69,12 @@ def _generate_greeting_response(state: GovernanceState) -> str:
 def _generate_disambiguation_response(state: GovernanceState) -> str:
     """Generate response when multiple step candidates found"""
     candidates = state.get("candidate_step_ids", [])
+    user_message = state.get("user_message", "")
     
     if not candidates:
         return "I couldn't find a matching step. Could you provide more details?"
     
-    # Get details for each candidate
+    # Get FULL details for each candidate (not just purpose!)
     candidate_details = []
     for step_id in candidates[:3]:  # Top 3
         record = governance_data.get_step_record(step_id)
@@ -81,25 +82,56 @@ def _generate_disambiguation_response(state: GovernanceState) -> str:
             candidate_details.append({
                 "id": record["id"],
                 "name": record["name"],
-                "purpose": record["purpose"]
+                "purpose": record["purpose"],
+                "description": record["description"]  # Include full description!
             })
     
-    # Build response showing candidates
-    response_parts = [
-        f"I found {len(candidate_details)} steps that might match your question:\n"
-    ]
+    # Build rich prompt for LLM to explain candidates
+    prompt = f"""The user asked: "{user_message}"
+
+This question could relate to multiple governance steps. DO NOT pretend to know the single correct step.
+
+Here are the candidate steps with full details:
+
+{json.dumps(candidate_details, indent=2)}
+
+Your task:
+1. Briefly acknowledge the ambiguity (e.g., "This could relate to a couple of different steps")
+2. For EACH candidate step, provide:
+   - The step ID and name
+   - A clear 2-3 sentence explanation of what it involves (use the description)
+   - How it differs from the other candidates
+3. Ask 1-2 clarifying questions to help them choose which applies
+
+Guidelines:
+- Use natural language, not JSON formatting
+- Use bullet points or numbered lists for clarity
+- Explain the KEY DIFFERENCES between the steps
+- Keep it practical and action-oriented
+- End with clarifying questions
+
+Example structure:
+"Thanks for your question! This could relate to a couple of different steps:
+
+**S16: Information Security** involves [explain what it covers using description]
+
+**S8: Cloud Control Assurance** specifically focuses on [explain what it covers using description]
+
+The key difference is [explain how they differ].
+
+[Ask clarifying question to help them choose]"
+
+Now write your response:"""
     
-    for i, candidate in enumerate(candidate_details, 1):
-        response_parts.append(
-            f"\n{i}. **{candidate['id']}: {candidate['name']}**"
-            f"\n   {candidate['purpose']}\n"
-        )
-    
-    response_parts.append(
-        "\nWhich of these were you asking about? Or could you clarify your question?"
+    messages = [{"role": "user", "content": prompt}]
+    response = cortex.get_chat_response(
+        messages,
+        max_tokens=1200,  # Need more tokens for detailed explanations
+        temperature=0.0,
+        thinking_enabled=False
     )
     
-    return "".join(response_parts)
+    return response
 
 
 def _generate_step_response(state: GovernanceState) -> str:
