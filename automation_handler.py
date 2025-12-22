@@ -142,14 +142,18 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
     Returns:
         JSON string with {"name": str, "type": str} or None
     """
+    print(f"DEBUG: Extracting params from message: {message}")
+    
     # Extract name (AL#####.Name pattern) - be more flexible with the pattern
     name_match = re.search(r'(AL\d+\.[A-Za-z0-9.]+)', message, re.IGNORECASE)
     if not name_match:
+        print("DEBUG: No name match found")
         return None
     
     name = name_match.group(1)
     # Normalize the name
     name = name.strip()
+    print(f"DEBUG: Extracted name: {name}")
     
     # Extract type (ODP, FDP, or CDP)
     msg_lower = message.lower()
@@ -163,8 +167,10 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
         type_val = "CDP"
     
     if not type_val:
-        # Try to infer from previous context or default
+        print("DEBUG: No type found")
         return None
+    
+    print(f"DEBUG: Extracted type: {type_val}")
     
     # Return as JSON string with proper escaping
     params = {
@@ -173,4 +179,7 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
         "max_len": 75
     }
     
-    return json.dumps(params, ensure_ascii=False)
+    json_str = json.dumps(params, ensure_ascii=False)
+    print(f"DEBUG: Generated JSON: {json_str}")
+    
+    return json_str

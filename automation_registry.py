@@ -27,6 +27,9 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
     
     try:
         # Parse user input
+        print(f"DEBUG: Received user_input type: {type(user_input)}")
+        print(f"DEBUG: Received user_input value: {user_input}")
+        
         if isinstance(user_input, str):
             params = json.loads(user_input)
         else:
@@ -84,11 +87,14 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
         return response
         
     except json.JSONDecodeError as e:
+        print(f"DEBUG: JSON decode error: {e}")
+        print(f"DEBUG: Raw user_input that failed: {repr(user_input)}")
         return {
             "status": "error",
             "message": f"Invalid JSON format: {str(e)}"
         }
     except Exception as e:
+        print(f"DEBUG: General error: {e}")
         return {
             "status": "error",
             "message": f"Validation error: {str(e)}"
