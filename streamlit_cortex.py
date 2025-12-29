@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import hashlib
+import re
 
 # Import the governance pipeline 
 from workflow import process_query_sync
@@ -170,7 +171,55 @@ def generate_conversation_id():
 
 def generate_conversation_title(first_message: str) -> str:
     """Generate a short title summarizing the conversation"""
+    def _fallback_title(msg: str) -> str:
+        tokens = re.findall(r"[a-z0-9]+(?:[/-][a-z0-9]+)*", (msg or "").lower())
+        stop = {
+            "a", "an", "and", "are", "as", "at", "be", "before", "can", "could", "do", "does", "for",
+            "from", "get", "how", "i", "in", "is", "it", "me", "most", "need", "of", "on", "or",
+            "our", "please", "should", "tell", "that", "the", "then", "this", "to", "us", "we",
+            "what", "when", "where", "which", "who", "why", "you", "your",
+        }
+        kept = [t for t in tokens if t not in stop and len(t) >= 3]
+        if not kept:
+            return (msg or "Conversation")[:30] + ("..." if msg and len(msg) > 30 else "")
+        # Prefer a small, specific phrase.
+        phrase = kept[:4]
+        phrase = [p.replace("/", " ").replace("-", " ") for p in phrase]
+        title = " ".join(" ".join(phrase).split())
+        return title[:40].strip()
+
+    def _sanitize(title: str) -> str:
+        t = (title or "").strip().strip('"').strip("'")
+        t = re.sub(r"\s+", " ", t).strip()
+        # Remove trailing punctuation / overly generic outputs.
+        t = t.strip(" .,:;—-")
+        return t
+
+    generic = {"final", "security", "question", "help", "status", "launch", "approval", "approvals"}
+
     try:
+        msg = (first_message or "").strip()
+        if not msg:
+            return "Conversation"
+
+        # Prefer deterministic titles when possible (faster + more consistent than LLM).
+        from governance_data import get_governance_data
+        governance_data = get_governance_data()
+
+        sid, method, conf = governance_data.deterministic_match(msg)
+        if sid and conf >= 0.85:
+            rec = governance_data.get_step_record(sid)
+            if rec and rec.get("name"):
+                return _sanitize(f"{sid}: {rec['name']}")[:50]
+
+        # If this looks like name validation, label it directly.
+        try:
+            from automation_handler import detect_automation_request
+            if detect_automation_request(msg):
+                return "Name Validation"
+        except Exception:
+            pass
+
         prompt = f"""Generate a very brief title (3-5 words max) that summarizes this governance question:
 
 "{first_message}"
@@ -191,13 +240,15 @@ Return only the title, nothing else."""
             thinking_enabled=False
         ))
 
-        title = response.strip()
-        # Remove quotes if present
-        title = title.replace('"', '').replace("'", '')
+        title = _sanitize(response)
+        if not title:
+            return _fallback_title(first_message)
+        if title.lower() in generic or len(title) < 4:
+            return _fallback_title(first_message)
         return title
-    except:
+    except Exception:
         # Fallback to truncated message
-        return first_message[:30] + ("..." if len(first_message) > 30 else "")
+        return _fallback_title(first_message)
 
 
 def start_new_conversation():
@@ -251,17 +302,17 @@ with st.sidebar:
         for conv_id, conv_data in sorted_conversations:
             is_active = conv_id == st.session_state.current_conversation_id
             
-            # Create button for each conversation
-            button_label = f"{'🟢 ' if is_active else ''}  {conv_data['title']}"
-            
-            if st.button(button_label, key=f"conv_{conv_id}", use_container_width=True):
-                load_conversation(conv_id)
-                st.rerun()
-            
-            # Show timestamp
             created_time = datetime.fromisoformat(conv_data["created_at"])
-            st.caption(created_time.strftime("%b %d, %I:%M %p"))
-            st.markdown("")
+            title = conv_data.get("title") or "Conversation"
+            button_label = f"{'🟢 ' if is_active else ''}  {title}"
+
+            cols = st.columns([0.72, 0.28], gap="small")
+            with cols[0]:
+                if st.button(button_label, key=f"conv_{conv_id}", use_container_width=True):
+                    load_conversation(conv_id)
+                    st.rerun()
+            with cols[1]:
+                st.caption(created_time.strftime("%b %d, %I:%M %p"))
     else:
         st.info("No conversations yet. Start chatting to create one!")
     
