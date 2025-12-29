@@ -1,5 +1,6 @@
 import json
 import re
+import os
 from typing import List, Tuple
 from state import GovernanceState
 from governance_data import get_governance_data
@@ -194,6 +195,14 @@ def _identify_steps(
     # Both candidates reasonably strong and fairly close in score
     if len(candidates) >= 2:
         c1, c2 = candidates[0], candidates[1]
+
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print("\nDEBUG: semantic_candidates (top 5)")
+            for c in candidates[:5]:
+                print(
+                    f"  {c['id']}: score={c.get('score'):.3f} "
+                    f"(emb={c.get('embedding_score', 0.0):.3f}, lex={c.get('lexical_score', 0.0):.3f})"
+                )
 
         # If the top hit has strong lexical evidence (rare/high-signal tokens from purpose/description),
         # prefer it even if embedding scores are close. This helps resolve "looks ambiguous but isn't".

@@ -209,8 +209,16 @@ class GovernanceDataLoader:
     def _tokenize(text: str) -> List[str]:
         if not text:
             return []
-        # Preserve meaningful compound tokens like "go/no-go" or "ops/support".
-        return re.findall(r"[a-z0-9]+(?:[/-][a-z0-9]+)*", text.lower())
+        # Preserve meaningful compound tokens like "go/no-go" while also emitting the parts
+        # so queries like "operations/support" can match docs that say "operations" or "support".
+        tokens: List[str] = []
+        for tok in re.findall(r"[a-z0-9]+(?:[/-][a-z0-9]+)*", text.lower()):
+            tokens.append(tok)
+            if "/" in tok or "-" in tok:
+                for part in re.split(r"[/-]", tok):
+                    if part:
+                        tokens.append(part)
+        return tokens
 
     def _build_step_text(self, sid: str, row: pd.Series) -> str:
         text_parts: List[str] = []
@@ -419,7 +427,9 @@ class GovernanceDataLoader:
         dots = self._embedding_matrix @ q
         sims = dots / (self._embedding_norms * qn)
 
-        idx = np.argsort(-sims)[: max(1, top_k)]
+        # Preselect a larger pool by embedding score, then rerank with lexical signal.
+        pool_k = max(1, top_k * 5)
+        idx = np.argsort(-sims)[:pool_k]
         out: List[Dict[str, Any]] = []
         for i in idx:
             sid = self._embedding_ids[int(i)]
@@ -435,7 +445,8 @@ class GovernanceDataLoader:
                     "text": self.step_embeddings.get(sid, {}).get("text", ""),
                 }
             )
-        return out
+        out.sort(key=lambda x: x["score"], reverse=True)
+        return out[:top_k]
     
     # Get all outgoing edges from a step
     def get_outgoing_edges(self, step_id: str) -> List[Dict]:
