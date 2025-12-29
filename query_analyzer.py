@@ -35,7 +35,7 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         state["match_confidence"] = confidence
         
         # If multiple candidates found, this is disambiguation 
-        if candidates and len(candidates) > 1:
+        if intent != "automation_request" and candidates and len(candidates) > 1:
             print(f"  Setting needs_disambiguation = True (found {len(candidates)} candidates)")
             state["needs_disambiguation"] = True
             # Override intent to make response generation clearer

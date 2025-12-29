@@ -36,8 +36,14 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
     # Check if automation is available
     automation_step = state.get("automation_step")
     if not automation_step:
-        state["answer"] = "I don't see an automation available for this step. Please specify which step you'd like to automate."
-        return state
+        # If the user asked for a known automation (e.g., name validation) without referencing a step,
+        # infer the tool directly from the message.
+        if detect_automation_request(user_message):
+            automation_step = "validate_name"
+            state["automation_step"] = automation_step
+        else:
+            state["answer"] = "I can run automations like name validation. Tell me which automation you want, and include the required parameters."
+            return state
     
     # Verify automation exists in registry
     auto_info = get_automation_info(automation_step)
