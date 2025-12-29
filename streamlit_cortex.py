@@ -9,6 +9,7 @@ import hashlib
 # Import the governance pipeline 
 from workflow import process_query_sync
 from cortex_connection import cortex
+from cortex_utils import cortex_chat_text
 
 
 # Configure page
@@ -183,14 +184,14 @@ Examples:
 Return only the title, nothing else."""
 
         messages = [{"role": "user", "content": prompt}]
-        response = cortex.get_chat_response(
+        response = cortex_chat_text(cortex.get_chat_response(
             messages,
             max_tokens=50,
             temperature=0.3,
             thinking_enabled=False
-        )
+        ))
 
-        title = response.choices[0].message.content.strip()
+        title = response.strip()
         # Remove quotes if present
         title = title.replace('"', '').replace("'", '')
         return title

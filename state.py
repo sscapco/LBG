@@ -1,18 +1,9 @@
-"""
-State definitions for the Governance LangGraph pipeline
-"""
 from typing import TypedDict, List, Optional, Literal, Annotated
 from datetime import datetime
 import operator
 
-
+# State for the governance workflow graph.
 class GovernanceState(TypedDict, total=False):
-    """
-    State for the governance workflow graph.
-    
-    This maintains all context needed across the multi-turn conversation,
-    including user intent, identified steps, automation state, and history.
-    """
     
     # Current turn inputs
     user_message: str
@@ -64,12 +55,9 @@ class GovernanceState(TypedDict, total=False):
     step_details: Optional[dict]  # Detailed step information
     edges_info: Optional[dict]  # Edge information (next steps, etc.)
 
-
+# Persistent session state stored across conversations.
 class SessionState(TypedDict):
-    """
-    Persistent session state stored across conversations.
-    This is a simplified version of GovernanceState for storage.
-    """
+
     last_intent: Optional[str]
     last_focus_step_id: Optional[str]
     last_anchor_step_id: Optional[str]
@@ -82,17 +70,9 @@ class SessionState(TypedDict):
     timestamp: str
 
 
+# Create initial state for a new conversation turn
 def create_initial_state(user_message: str, session_id: str = "default") -> GovernanceState:
-    """
-    Create initial state for a new conversation turn
-    
-    Args:
-        user_message: User's input message
-        session_id: Session identifier
-        
-    Returns:
-        Initial GovernanceState
-    """
+
     return GovernanceState(
         user_message=user_message,
         session_id=session_id,
@@ -119,16 +99,8 @@ def create_initial_state(user_message: str, session_id: str = "default") -> Gove
     )
 
 
+# Convert GovernanceState to SessionState for persistence
 def state_to_session_state(state: GovernanceState) -> SessionState:
-    """
-    Convert GovernanceState to SessionState for persistence
-    
-    Args:
-        state: Current governance state
-        
-    Returns:
-        SessionState for storage
-    """
     return SessionState(
         last_intent=state.get("intent"),
         last_focus_step_id=state.get("focus_step_id"),
@@ -142,17 +114,9 @@ def state_to_session_state(state: GovernanceState) -> SessionState:
         timestamp=state.get("timestamp", datetime.utcnow().isoformat() + "Z"),
     )
 
-
+# Convert SessionState to previous_state dict for use in new turn
 def session_state_to_previous_state(session_state: Optional[SessionState]) -> Optional[dict]:
-    """
-    Convert SessionState to previous_state dict for use in new turn
-    
-    Args:
-        session_state: Previous session state
-        
-    Returns:
-        Dictionary for previous_state field
-    """
+
     if not session_state:
         return None
     

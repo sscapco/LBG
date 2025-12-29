@@ -1,30 +1,13 @@
-"""
-Response generator node: Creates the final user-facing response
-"""
 import json
 from typing import List, Dict
 from state import GovernanceState
-from governance_data import governance_data
+from governance_data import get_governance_data
 from cortex_connection import cortex
+from cortex_utils import cortex_chat_text
 
-
+# Generate final response to user based on analyzed query and gathered information.
 def response_generator_node(state: GovernanceState) -> GovernanceState:
-    """
-    Generate final response to user based on analyzed query and gathered information.
     
-    This node:
-    1. Checks if answer already exists (e.g., from automation)
-    2. Handles different intents appropriately
-    3. Formats step information professionally
-    4. Handles disambiguation when multiple candidates exist
-    5. Generates natural language response using LLM
-    
-    Args:
-        state: Current governance state
-        
-    Returns:
-        Updated state with 'answer' field populated
-    """
     # If answer already set (e.g., by automation node), skip
     if state.get("answer"):
         return state
@@ -33,11 +16,6 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     needs_disambiguation = state.get("needs_disambiguation")
     focus_step_id = state.get("focus_step_id")
     
-    print(f"\nDEBUG response_generator:")
-    print(f"  Intent: {intent}")
-    print(f"  Needs disambiguation: {needs_disambiguation}")
-    print(f"  Focus step: {focus_step_id}")
-    
     # Handle different intents
     if intent == "greeting":
         print(f"  → Generating greeting")
@@ -45,15 +23,12 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     
     elif intent == "automation_request":
         # Should have been handled by automation node
-        print(f"  → Generating automation prompt")
         state["answer"] = "I can help with automation. Please specify which step and provide the required parameters."
     
     elif needs_disambiguation:
-        print(f"  → Generating DISAMBIGUATION response")
         state["answer"] = _generate_disambiguation_response(state)
     
     elif focus_step_id:
-        print(f"  → Generating step response for {focus_step_id}")
         state["answer"] = _generate_step_response(state)
     
     elif intent == "ask_next_step":
@@ -64,9 +39,8 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     
     return state
 
-
+# Generate friendly greeting response
 def _generate_greeting_response(state: GovernanceState) -> str:
-    """Generate friendly greeting response"""
     return (
         "Hello! I'm your governance workflow assistant. "
         "I can help you:\n"
@@ -76,16 +50,16 @@ def _generate_greeting_response(state: GovernanceState) -> str:
         "What would you like to know?"
     )
 
-
+# Generate response when multiple step candidates found
 def _generate_disambiguation_response(state: GovernanceState) -> str:
-    """Generate response when multiple step candidates found"""
+    governance_data = get_governance_data()
     candidates = state.get("candidate_step_ids", [])
     user_message = state.get("user_message", "")
     
     if not candidates:
         return "I couldn't find a matching step. Could you provide more details?"
     
-    # Get FULL details for each candidate (not just purpose!)
+    # Get full details for each candidate
     candidate_details = []
     for step_id in candidates[:3]:  # Top 3
         record = governance_data.get_step_record(step_id)
@@ -94,7 +68,7 @@ def _generate_disambiguation_response(state: GovernanceState) -> str:
                 "id": record["id"],
                 "name": record["name"],
                 "purpose": record["purpose"],
-                "description": record["description"]  # Include full description!
+                "description": record["description"]  
             })
     
     # Build rich prompt for LLM to explain candidates
@@ -135,18 +109,18 @@ The key difference is [explain how they differ].
 Now write your response:"""
     
     messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
+    response = cortex_chat_text(cortex.get_chat_response(
         messages,
         max_tokens=2000,  # Increased for long step descriptions with multiple candidates
         temperature=0.0,
         thinking_enabled=False
-    )
+    ))
     
     return response
 
-
+# Generate detailed response about a specific step
 def _generate_step_response(state: GovernanceState) -> str:
-    """Generate detailed response about a specific step"""
+    governance_data = get_governance_data()
     step_details = state.get("step_details")
     if not step_details:
         return "I couldn't find information about that step."
@@ -211,18 +185,18 @@ Create a helpful response that:
 Keep it clear and practical."""
     
     messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
+    response = cortex_chat_text(cortex.get_chat_response(
         messages,
         max_tokens=1500,  # Increased for verbatim descriptions
         temperature=0.0,
         thinking_enabled=False
-    )
+    ))
     
     return response
 
-
+# Generate response about what comes next
 def _generate_next_step_response(state: GovernanceState) -> str:
-    """Generate response about what comes next"""
+    governance_data = get_governance_data()
     next_steps = state.get("next_step_ids", [])
     anchor_id = state.get("anchor_step_id")
     
@@ -254,18 +228,17 @@ Create a helpful response that:
 Use a natural, conversational tone."""
     
     messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
+    response = cortex_chat_text(cortex.get_chat_response(
         messages,
         max_tokens=1000,
         temperature=0.0,
         thinking_enabled=False
-    )
+    ))
     
     return response
 
-
+# Generate fallback response when intent unclear
 def _generate_fallback_response(state: GovernanceState) -> str:
-    """Generate fallback response when intent unclear"""
     user_message = state.get("user_message", "")
     
     # Try to provide something helpful
@@ -284,11 +257,11 @@ Create a brief, helpful response that:
 Keep it friendly and concise (2-3 sentences)."""
     
     messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
+    response = cortex_chat_text(cortex.get_chat_response(
         messages,
         max_tokens=300,
         temperature=0.3,
         thinking_enabled=False
-    )
+    ))
     
     return response

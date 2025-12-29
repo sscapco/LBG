@@ -3,10 +3,8 @@ import json
 import os
 from automation_tools.common import LLM
 
-
-class CortexLLM(LLM):
-    """Cortex API LLM implementation"""
-    
+# Cortex API LLM implementation
+class CortexLLM(LLM):    
     def __init__(self, settings):
         self.baseurl = settings.cortex_baseurl
         self.client_id = settings.cortex_client_id
@@ -23,18 +21,6 @@ class CortexLLM(LLM):
         self.chat_url = f"{self.baseurl}/chat/completions"
     
     def generate(self, prompt: str, temperature: float = 0.0, max_tokens: int = 400, **kwargs) -> str:
-        """
-        Generate text using Cortex API
-        
-        Args:
-            prompt: Input prompt
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            **kwargs: Additional parameters (ignored for compatibility)
-            
-        Returns:
-            Generated text
-        """
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -70,8 +56,8 @@ class CortexLLM(LLM):
 
 
 # Factory
+# Get LLM instance based on provider in settings
 def get_llm(settings) -> LLM:
-    """Get LLM instance based on provider in settings"""
     provider = (settings.llm_provider or "cortex").lower()
     
     if provider in ["cortex", "vertex_ai"]:

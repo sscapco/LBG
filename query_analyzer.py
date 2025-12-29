@@ -1,43 +1,26 @@
-"""
-Query analyzer node: Classifies intent and identifies relevant steps
-"""
 import json
 import re
 from typing import List, Tuple
 from state import GovernanceState
-from governance_data import governance_data
+from governance_data import get_governance_data
 from cortex_connection import cortex
+from cortex_utils import cortex_chat_text, parse_json_object
 
+# Analyze user query to determine intent and identify relevant steps.
 
 def analyze_query_node(state: GovernanceState) -> GovernanceState:
-    """
-    Analyze user query to determine intent and identify relevant steps.
-    
-    This node:
-    1. Classifies user intent (greeting, ask_about_step, automation_request, etc.)
-    2. Identifies step(s) mentioned in the query
-    3. Determines if disambiguation is needed
-    4. Gathers step details and edges
-    
-    Args:
-        state: Current governance state
-        
-    Returns:
-        Updated state with intent, focus_step_id, and candidate_step_ids
-    """
     user_message = state["user_message"]
     previous_state = state.get("previous_state")
+    governance_data = get_governance_data()
     
     # Step 1: Classify intent using LLM
     intent, intent_confidence = _classify_intent(user_message, previous_state)
     state["intent"] = intent
     
     # Step 2: Identify steps based on intent
-    # Note: We run step identification for clarification_needed too, because the user
-    # might be asking about steps in an ambiguous way (e.g., "security bits or cloud checks?")
     if intent in ["ask_about_step", "ask_next_step", "ask_previous_step", 
                   "mark_complete", "mark_in_progress", "automation_request",
-                  "clarification_needed"]:  # Added clarification_needed!
+                  "clarification_needed"]: 
         
         focus_step_id, candidates, method, confidence = _identify_steps(
             user_message, 
@@ -45,19 +28,13 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
             intent
         )
         
-        print(f"\nDEBUG query_analyzer:")
-        print(f"  Intent: {intent}")
-        print(f"  Focus step: {focus_step_id}")
-        print(f"  Candidates: {candidates}")
-        print(f"  Match method: {method}")
-        print(f"  Confidence: {confidence}")
         
         state["focus_step_id"] = focus_step_id
         state["candidate_step_ids"] = candidates
         state["match_method"] = method
         state["match_confidence"] = confidence
         
-        # If we found multiple candidates, this is disambiguation - regardless of intent!
+        # If multiple candidates found, this is disambiguation 
         if candidates and len(candidates) > 1:
             print(f"  Setting needs_disambiguation = True (found {len(candidates)} candidates)")
             state["needs_disambiguation"] = True
@@ -67,6 +44,18 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
             state["needs_disambiguation"] = False
         
         # Step 3: Gather step details and edges
+        if intent == "ask_next_step" and not focus_step_id and previous_state:
+            # If the user asks "what's next?" without naming a step, use prior context.
+            anchor = previous_state.get("anchor_step_id") or previous_state.get("focus_step_id")
+            if anchor:
+                outgoing = governance_data.get_outgoing_edges(anchor)
+                next_step_ids = sorted(
+                    set([e["to"] for e in outgoing]),
+                    key=governance_data.step_index
+                )
+                state["next_step_ids"] = next_step_ids
+                state["anchor_step_id"] = anchor
+
         if focus_step_id:
             step_details = governance_data.get_step_record(focus_step_id)
             state["step_details"] = step_details
@@ -87,40 +76,14 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
                 state["automatable_step_id"] = focus_step_id
                 state["automation_step"] = step_details.get("automation_step")
     
-    elif intent == "ask_next_step" and previous_state:
-        # Use anchor from previous state
-        anchor = previous_state.get("anchor_step_id") or previous_state.get("focus_step_id")
-        if anchor:
-            outgoing = governance_data.get_outgoing_edges(anchor)
-            next_step_ids = sorted(
-                set([e["to"] for e in outgoing]),
-                key=governance_data.step_index
-            )
-            state["next_step_ids"] = next_step_ids
-            state["anchor_step_id"] = anchor
-            
-            # Focus on first next step
-            if next_step_ids:
-                state["focus_step_id"] = next_step_ids[0]
-                state["step_details"] = governance_data.get_step_record(next_step_ids[0])
-    
     elif intent == "greeting":
         state["needs_disambiguation"] = False
     
     return state
 
+# Classify user intent using LLM
 
 def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[str, float]:
-    """
-    Classify user intent using LLM
-    
-    Args:
-        user_message: User's input
-        previous_state: State from previous turn (for context)
-        
-    Returns:
-        Tuple of (intent, confidence)
-    """
     # Build context from previous state
     context = ""
     if previous_state:
@@ -151,20 +114,38 @@ Respond with ONLY a JSON object:
 }}"""
     
     messages = [{"role": "user", "content": prompt}]
-    response = cortex.get_chat_response(
+    response = cortex_chat_text(cortex.get_chat_response(
         messages, 
         max_tokens=200, 
         temperature=0.0,
         thinking_enabled=False
-    )
+    ))
     
     try:
-        # Extract JSON from response
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-            return data.get("intent", "unknown"), data.get("confidence", 0.5)
-    except:
+        data = parse_json_object(
+            response,
+            {
+                "intent": str,
+                "confidence": (int, float),
+            },
+        )
+        if data:
+            intent = data.get("intent", "unknown")
+            confidence = float(data.get("confidence", 0.5))
+            allowed = {
+                "greeting",
+                "ask_about_step",
+                "ask_next_step",
+                "ask_previous_step",
+                "mark_complete",
+                "mark_in_progress",
+                "automation_request",
+                "clarification_needed",
+                "unknown",
+            }
+            if intent in allowed and 0.0 <= confidence <= 1.0:
+                return intent, confidence
+    except Exception:
         pass
     
     # Fallback to simple keyword matching
@@ -185,110 +166,48 @@ Respond with ONLY a JSON object:
     
     return "ask_about_step", 0.6
 
+# Identify step(s) mentioned in user message
 
 def _identify_steps(
     user_message: str,
     previous_state: dict = None,
     intent: str = "ask_about_step"
 ) -> Tuple[str, List[str], str, float]:
-    """
-    Identify step(s) mentioned in user message
+    governance_data = get_governance_data()
     
-    Args:
-        user_message: User's input
-        previous_state: State from previous turn
-        intent: Classified intent
-        
-    Returns:
-        Tuple of (focus_step_id, candidate_step_ids, match_method, confidence)
-    """
     # Try deterministic matching first (ID, alias, substring)
-    focus_id, method, confidence = governance_data.map_text_to_step_id(
-        user_message, 
-        emb_threshold=0.30  # Lower threshold to match original (was 0.5)
-    )
+    focus_id, method, confidence = governance_data.deterministic_match(user_message)
     
-    print(f"\nDEBUG _identify_steps:")
-    print(f"  Query: {user_message[:80]}...")
-    print(f"  Deterministic match: {focus_id}, method={method}, conf={confidence:.3f}")
-    
+     
     if focus_id and confidence >= 0.85 and method != "embedding_match":
         # High confidence deterministic match (not embedding-based)
-        print(f"  → Using deterministic match (high confidence)")
         return focus_id, [focus_id], method, confidence
     
-    # Always get top semantic candidates (like original)
-    candidates = _find_candidate_steps(user_message, top_k=5)
+    # Always get top semantic candidates
+    candidates = governance_data.semantic_candidates(user_message, top_k=5)
     
-    print(f"  Top 5 candidates from embedding search:")
-    for i, c in enumerate(candidates[:5], 1):
-        print(f"    {i}. {c['id']}: {c['score']:.3f}")
     
     if len(candidates) == 0:
-        print(f"  → No candidates found")
         return None, [], "no_match", 0.0
     
     # Check for disambiguation using original criteria:
-    # Both candidates reasonably strong AND fairly close in score
+    # Both candidates reasonably strong and fairly close in score
     if len(candidates) >= 2:
         c1, c2 = candidates[0], candidates[1]
         
-        print(f"  Disambiguation check:")
-        print(f"    c1: {c1['id']} score={c1['score']:.3f} (need >=0.40)")
-        print(f"    c2: {c2['id']} score={c2['score']:.3f} (need >=0.35)")
-        print(f"    diff: {c1['score'] - c2['score']:.3f} (need <=0.15)")
-        
-        # Original disambiguation logic:
-        # c1.score >= 0.40 AND c2.score >= 0.35 AND (c1.score - c2.score) <= 0.15
+        # Disambiguation logic:
         if (c1["score"] >= 0.40 and 
             c2["score"] >= 0.35 and 
             (c1["score"] - c2["score"]) <= 0.15):
             # Ambiguous - return top 3 for disambiguation
             candidate_ids = [c["id"] for c in candidates[:3]]
-            print(f"  → DISAMBIGUATION triggered! Returning: {candidate_ids}")
             return c1["id"], candidate_ids, "embedding_match_ambiguous", c1["score"]
         else:
             print(f"  → No disambiguation (criteria not met)")
     
     # Single best match (original: score >= 0.30)
     if candidates[0]["score"] >= 0.30:
-        print(f"  → Single best match: {candidates[0]['id']}")
         return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
     
     # No good match
-    print(f"  → No good match (best score < 0.30)")
     return None, [], "no_match", 0.0
-
-
-def _find_candidate_steps(query: str, top_k: int = 5) -> List[dict]:
-    """
-    Find top-k candidate steps using embedding similarity
-    
-    Args:
-        query: User's query
-        top_k: Number of candidates to return
-        
-    Returns:
-        List of dicts with 'id', 'score', and 'text'
-    """
-    query_emb = cortex.get_embedding(query)
-    
-    scores = []
-    for step_id, data in governance_data.step_embeddings.items():
-        sim = governance_data.cosine_similarity(query_emb, data["embedding"])
-        scores.append({
-            "id": step_id,
-            "score": sim,
-            "text": data["text"]
-        })
-    
-    # Sort by score descending
-    scores.sort(key=lambda x: x["score"], reverse=True)
-    
-    # Debug output
-    print(f"\nDEBUG _find_candidate_steps for query: '{query[:50]}...'")
-    print(f"Top {min(5, len(scores))} candidates:")
-    for i, candidate in enumerate(scores[:5], 1):
-        print(f"  {i}. {candidate['id']}: {candidate['score']:.3f}")
-    
-    return scores[:top_k]

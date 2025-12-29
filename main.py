@@ -1,16 +1,10 @@
-"""
-Main application entry point for Governance Q&A Pipeline
-"""
 import asyncio
 from workflow import process_query, process_query_sync, clear_session
 
-
+# Async demo of the governance Q&A pipeline
 async def main_async():
-    """
-    Async demo of the governance Q&A pipeline
-    """
     print("\n" + "=" * 80)
-    print("🏛️ GOVERNANCE Q&A PIPELINE - LANGGRAPH VERSION")
+    print(" GOVERNANCE Q&A PIPELINE")
     print("=" * 80)
     
     # Demo conversations
@@ -30,20 +24,17 @@ async def main_async():
         print(f"\n💬 ANSWER:\n{response}\n")
         
         if i < len(demos):
-            print("\n⏸️ Next demo...\n")
+            print("\n Next demo...\n")
             await asyncio.sleep(1)
     
     print("\n" + "=" * 80)
-    print("✅ DEMOS COMPLETE")
+    print("DEMOS COMPLETE")
     print("=" * 80)
 
-
+# Synchronous demo of the governance Q&A pipeline
 def main_sync():
-    """
-    Synchronous demo of the governance Q&A pipeline
-    """
     print("\n" + "=" * 80)
-    print("🏛️ GOVERNANCE Q&A PIPELINE - LANGGRAPH VERSION")
+    print(" GOVERNANCE Q&A PIPELINE - LANGGRAPH VERSION")
     print("=" * 80)
     
     # Demo conversations
@@ -71,11 +62,8 @@ def main_sync():
 
 
 def interactive_mode():
-    """
-    Interactive mode for testing queries
-    """
     print("\n" + "=" * 80)
-    print("🏛️ GOVERNANCE Q&A PIPELINE - INTERACTIVE MODE")
+    print(" GOVERNANCE Q&A PIPELINE - INTERACTIVE MODE")
     print("=" * 80)
     print("\nType 'quit' or 'exit' to stop")
     print("Type 'clear' to clear session\n")
@@ -84,7 +72,7 @@ def interactive_mode():
     
     while True:
         try:
-            user_input = input("\n📝 Your query: ").strip()
+            user_input = input("\n Your query: ").strip()
             
             if not user_input:
                 continue
@@ -101,10 +89,10 @@ def interactive_mode():
             print(f"\n💬 ANSWER:\n{response}\n")
             
         except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
+            print("\n\n Goodbye!")
             break
         except Exception as e:
-            print(f"\n❌ Error: {e}\n")
+            print(f"\n Error: {e}\n")
 
 
 if __name__ == "__main__":

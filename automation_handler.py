@@ -1,6 +1,3 @@
-"""
-Automation handler node: Detects and executes automation requests
-"""
 import json
 import re
 from typing import Optional, Tuple
@@ -25,23 +22,10 @@ except ImportError:
     def get_automation_info(automation_step: str):
         return None
 
+# Handle automation requests by detecting parameters and executing automation.
 
 def automation_handler_node(state: GovernanceState) -> GovernanceState:
-    """
-    Handle automation requests by detecting parameters and executing automation.
     
-    This node:
-    1. Checks if automation is requested (based on intent)
-    2. Detects if automation is available for current step
-    3. Extracts parameters from user message
-    4. Executes automation and formats result
-    
-    Args:
-        state: Current governance state
-        
-    Returns:
-        Updated state with automation_result
-    """
     intent = state.get("intent")
     user_message = state.get("user_message", "")
     
@@ -86,74 +70,44 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
     
     return state
 
+# Detect if user is requesting automation using Python logic.
 
 def detect_automation_request(message: str) -> bool:
-    """
-    Detect if user is requesting automation using Python logic.
-    This is a backup to LLM intent classification.
-    
-    Args:
-        message: User's message
-        
-    Returns:
-        True if automation request detected
-    """
     msg_lower = message.lower()
     
     # Check for action words
     action_words = ["run", "execute", "validate", "check", "perform"]
     has_action = any(word in msg_lower for word in action_words)
     
-    # Check for data product name pattern (AL####.Name)
-    has_name = bool(re.search(r'al\d+\.\w+', msg_lower))
+    # Check for data product name pattern (AppID.BusinessName), where AppID is 2 letters + 5 digits
+    # (e.g., AL18725.CustomerData, XY12345.CustomerData).
+    has_name = bool(re.search(r'\b[a-z]{2}\d{5}\.[a-z0-9.]+\b', msg_lower))
     
     # Check for type keywords
     has_type = any(t in msg_lower for t in ["odp", "fdp", "cdp"])
     
     return has_action and has_name and has_type
 
-
+# Extract parameters from user message based on automation type
 def _extract_automation_params(message: str, automation_step: str) -> Optional[str]:
-    """
-    Extract parameters from user message based on automation type
     
-    Args:
-        message: User's message
-        automation_step: Type of automation (e.g., "validate_name")
-        
-    Returns:
-        JSON string of parameters, or None if extraction failed
-    """
     if automation_step == "validate_name":
         return _extract_name_validation_params(message)
     
-    # Add other automation parameter extractors here
     
     return None
 
+# Extract name validation parameters (name and type) from message
 
-def _extract_name_validation_params(message: str) -> Optional[str]:
-    """
-    Extract name validation parameters (name and type) from message
-    
-    Args:
-        message: User's message
-        
-    Returns:
-        JSON string with {"name": str, "type": str} or None
-    """
-    print(f"DEBUG: Extracting params from message: {message}")
-    
-    # Extract name (AL#####.Name pattern) - be more flexible with the pattern
-    name_match = re.search(r'(AL\d+\.[A-Za-z0-9.]+)', message, re.IGNORECASE)
+def _extract_name_validation_params(message: str) -> Optional[str]:    
+    # Extract name (AppID.BusinessName pattern), where AppID is 2 letters + 5 digits.
+    name_match = re.search(r'([A-Z]{2}\d{5}\.[A-Za-z0-9.]+)', message, re.IGNORECASE)
     if not name_match:
-        print("DEBUG: No name match found")
         return None
     
     name = name_match.group(1)
     # Normalize the name
     name = name.strip()
-    print(f"DEBUG: Extracted name: {name}")
     
     # Extract type (ODP, FDP, or CDP)
     msg_lower = message.lower()
@@ -167,10 +121,8 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
         type_val = "CDP"
     
     if not type_val:
-        print("DEBUG: No type found")
         return None
     
-    print(f"DEBUG: Extracted type: {type_val}")
     
     # Return as JSON string with proper escaping
     params = {
@@ -180,6 +132,5 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
     }
     
     json_str = json.dumps(params, ensure_ascii=False)
-    print(f"DEBUG: Generated JSON: {json_str}")
-    
+
     return json_str

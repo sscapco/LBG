@@ -26,9 +26,6 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
         }
     
     try:
-        # Parse user input
-        print(f"DEBUG: Received user_input type: {type(user_input)}")
-        print(f"DEBUG: Received user_input value: {user_input}")
         
         if isinstance(user_input, str):
             params = json.loads(user_input)
@@ -87,14 +84,11 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
         return response
         
     except json.JSONDecodeError as e:
-        print(f"DEBUG: JSON decode error: {e}")
-        print(f"DEBUG: Raw user_input that failed: {repr(user_input)}")
         return {
             "status": "error",
             "message": f"Invalid JSON format: {str(e)}"
         }
     except Exception as e:
-        print(f"DEBUG: General error: {e}")
         return {
             "status": "error",
             "message": f"Validation error: {str(e)}"
@@ -104,16 +98,10 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
 # ==================== FUTURE AUTOMATION HANDLERS ====================
 # Add new automation handlers here following the same pattern
 
+# Example template for future automation handlers.
+
 def example_future_automation(user_input: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Example template for future automation handlers.
     
-    Args:
-        user_input: Optional input from user (JSON string or dict)
-    
-    Returns:
-        Dictionary with automation results or request for input
-    """
     if user_input is None:
         return {
             "status": "needs_input",
@@ -140,49 +128,23 @@ AUTOMATION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "display_name": "Data Product Name Validation",
         "category": "naming"
     },
-    # Add more automation tools here as they're developed:
-    # "check_lineage": {
-    #     "handler": check_lineage_handler,
-    #     "description": "Verify data lineage connections",
-    #     "display_name": "Data Lineage Checker",
-    #     "category": "lineage"
-    # },
+    
 }
 
 
 # ==================== AUTOMATION EXECUTION ====================
 
+# Get information about an automation tool.
 def get_automation_info(automation_step: str) -> Optional[Dict[str, Any]]:
-    """
-    Get information about an automation tool.
-    
-    Args:
-        automation_step: The automation step identifier (e.g., "validate_name")
-    
-    Returns:
-        Dictionary with automation info or None if not found
-    """
+
     return AUTOMATION_REGISTRY.get(automation_step)
 
-
+# Execute an automation step from the registry.
 def run_automation_step(
     automation_step: str, 
     user_input: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Execute an automation step from the registry.
-    
-    Args:
-        automation_step: The automation step identifier (e.g., "validate_name")
-        user_input: Optional user input (JSON string or dict)
-    
-    Returns:
-        Dictionary with results, which may include:
-        - status: "success", "error", or "needs_input"
-        - For success: automation results
-        - For needs_input: prompt and expected_format
-        - For error: error message
-    """
+
     automation = AUTOMATION_REGISTRY.get(automation_step)
     
     if not automation:
@@ -203,17 +165,8 @@ def run_automation_step(
             "message": f"Automation execution failed: {str(e)}"
         }
 
-
+# Get a list of all available automation tools.
 def list_available_automations() -> Dict[str, Dict[str, str]]:
-    """
-    Get a list of all available automation tools.
-    
-    Returns:
-        Dictionary mapping automation_step to info dict with:
-        - description
-        - display_name
-        - category
-    """
     return {
         step: {
             "description": info["description"],
@@ -226,16 +179,9 @@ def list_available_automations() -> Dict[str, Dict[str, str]]:
 
 # ==================== HELPER FOR FORMATTING RESULTS ====================
 
+# Format automation results into a user-friendly string.
 def format_automation_result_for_user(result: Dict[str, Any]) -> str:
-    """
-    Format automation results into a user-friendly string.
     
-    Args:
-        result: Result dictionary from run_automation_step
-    
-    Returns:
-        Formatted string for display to user
-    """
     status = result.get("status")
     
     if status == "needs_input":
