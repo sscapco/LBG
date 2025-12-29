@@ -3,7 +3,7 @@ import numpy as np
 import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Iterable
 from cortex_connection import cortex
 import constants
 
@@ -16,6 +16,8 @@ class GovernanceDataLoader:
         self._embedding_matrix: Optional[np.ndarray] = None
         self._embedding_ids: List[str] = []
         self._embedding_norms: Optional[np.ndarray] = None
+        self._doc_tokens: Dict[str, set[str]] = {}
+        self._idf: Dict[str, float] = {}
         
         # Load Excel data
         self._load_excel_data()
@@ -25,6 +27,9 @@ class GovernanceDataLoader:
         
         # Build step aliases for deterministic matching
         self._build_step_aliases()
+
+        # Build lexical index for tie-breaking / reranking
+        self._build_lexical_index()
     
     def _load_excel_data(self):
         nodes_raw_df = pd.read_excel(self.excel_path, sheet_name="Nodes")
@@ -199,6 +204,78 @@ class GovernanceDataLoader:
         self._embedding_ids = ids
         self._embedding_matrix = mat
         self._embedding_norms = norms
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        if not text:
+            return []
+        # Preserve meaningful compound tokens like "go/no-go" or "ops/support".
+        return re.findall(r"[a-z0-9]+(?:[/-][a-z0-9]+)*", text.lower())
+
+    def _build_step_text(self, sid: str, row: pd.Series) -> str:
+        text_parts: List[str] = []
+        text_parts.append(f"Step {sid}")
+        text_parts.append(str(row.get("Step_Name", "")))
+
+        purpose = str(row.get("Purpose", ""))
+        if purpose and purpose != "nan":
+            text_parts.append(f"Purpose: {purpose}")
+
+        description = str(row.get("Description", ""))
+        if description and description != "nan":
+            text_parts.append(description)
+
+        stage = str(row.get("Stage_Name", ""))
+        if stage and stage != "nan":
+            text_parts.append(f"Stage: {stage}")
+
+        return " | ".join([p for p in text_parts if p])
+
+    def _build_lexical_index(self) -> None:
+        doc_tokens: Dict[str, set[str]] = {}
+        df: Dict[str, int] = {}
+
+        for _, row in self.nodes_df.iterrows():
+            sid = str(row["Step_ID"]).strip().upper()
+            text = self._build_step_text(sid, row)
+            toks = set(self._tokenize(text))
+            doc_tokens[sid] = toks
+            for tok in toks:
+                df[tok] = df.get(tok, 0) + 1
+
+        n_docs = max(1, len(doc_tokens))
+        idf: Dict[str, float] = {}
+        for tok, count in df.items():
+            # Smooth IDF; encourages rare, high-signal terms (e.g., "go/no-go").
+            idf[tok] = float(np.log((n_docs + 1) / (count + 1)) + 1.0)
+
+        self._doc_tokens = doc_tokens
+        self._idf = idf
+
+    def lexical_similarity(self, query: str, step_id: str) -> float:
+        if not query:
+            return 0.0
+        q_toks = set(self._tokenize(query))
+        if not q_toks:
+            return 0.0
+        doc = self._doc_tokens.get(step_id)
+        if not doc:
+            return 0.0
+        # Weighted overlap over the most informative query tokens (0..1).
+        # This avoids stopword-dominated queries drowning out a single high-signal term like "go/no-go".
+        ranked = sorted(q_toks, key=lambda t: self._idf.get(t, 1.0), reverse=True)
+        top = ranked[: min(6, len(ranked))]
+
+        total = 0.0
+        hit = 0.0
+        for tok in top:
+            w = self._idf.get(tok, 1.0)
+            total += w
+            if tok in doc:
+                hit += w
+        if total == 0:
+            return 0.0
+        return float(hit / total)
     
     # Build alias mappings for deterministic step matching
     def _build_step_aliases(self):
@@ -346,10 +423,15 @@ class GovernanceDataLoader:
         out: List[Dict[str, Any]] = []
         for i in idx:
             sid = self._embedding_ids[int(i)]
+            emb_score = float(sims[int(i)])
+            lex_score = self.lexical_similarity(text, sid)
+            combined = (0.75 * emb_score) + (0.25 * lex_score)
             out.append(
                 {
                     "id": sid,
-                    "score": float(sims[int(i)]),
+                    "score": combined,
+                    "embedding_score": emb_score,
+                    "lexical_score": lex_score,
                     "text": self.step_embeddings.get(sid, {}).get("text", ""),
                 }
             )

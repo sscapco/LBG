@@ -194,6 +194,13 @@ def _identify_steps(
     # Both candidates reasonably strong and fairly close in score
     if len(candidates) >= 2:
         c1, c2 = candidates[0], candidates[1]
+
+        # If the top hit has strong lexical evidence (rare/high-signal tokens from purpose/description),
+        # prefer it even if embedding scores are close. This helps resolve "looks ambiguous but isn't".
+        lex1 = float(c1.get("lexical_score", 0.0) or 0.0)
+        lex2 = float(c2.get("lexical_score", 0.0) or 0.0)
+        if lex1 >= 0.50 and (lex1 - lex2) >= 0.20 and c1["score"] >= 0.30:
+            return c1["id"], [c1["id"]], "lexical_tiebreak", c1["score"]
         
         # Disambiguation logic:
         if (c1["score"] >= 0.40 and 
