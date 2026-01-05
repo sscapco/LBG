@@ -1,5 +1,5 @@
 import asyncio
-from workflow import process_query, process_query_sync, clear_session
+from core.workflow import process_query, process_query_sync, clear_session
 
 # Async demo of the governance Q&A pipeline
 async def main_async():

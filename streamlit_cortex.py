@@ -8,9 +8,9 @@ import hashlib
 import re
 
 # Import the governance pipeline 
-from workflow import process_query_sync
+from core.workflow import process_query_sync
 from cortex_connection import cortex
-from cortex_utils import cortex_chat_text
+from core.cortex_utils import cortex_chat_text
 
 
 # Configure page
@@ -203,7 +203,7 @@ def generate_conversation_title(first_message: str) -> str:
             return "Conversation"
 
         # Prefer deterministic titles when possible (faster + more consistent than LLM).
-        from governance_data import get_governance_data
+        from core.governance_data import get_governance_data
         governance_data = get_governance_data()
 
         sid, method, conf = governance_data.deterministic_match(msg)
@@ -214,7 +214,7 @@ def generate_conversation_title(first_message: str) -> str:
 
         # If this looks like name validation, label it directly.
         try:
-            from automation_handler import detect_automation_request
+            from core.automation_handler import detect_automation_request
             if detect_automation_request(msg):
                 return "Name Validation"
         except Exception:

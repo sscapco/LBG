@@ -1,6 +1,6 @@
 import argparse
 
-from governance_data import GovernanceDataLoader
+from core.governance_data import GovernanceDataLoader
 
 
 def main() -> None:
@@ -14,4 +14,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
