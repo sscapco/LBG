@@ -48,6 +48,33 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
                 if a_id and b_id and a_id != b_id:
                     state["referenced_ids"] = [a_id, b_id]
 
+    # Navigation intents: if the user asks "what comes next?" and we have prior context,
+    # do not run semantic step matching (it will often look "ambiguous" across the whole workflow).
+    if intent == "ask_next_step":
+        anchor = None
+
+        # Explicit "after S##" style reference wins.
+        referenced_ids = state.get("referenced_ids") or []
+        if referenced_ids:
+            anchor = referenced_ids[0]
+
+        # Otherwise use session context (last explained step preferred).
+        if not anchor and previous_state:
+            explained = previous_state.get("explained_step_ids") or []
+            anchor = (
+                previous_state.get("anchor_step_id")
+                or previous_state.get("focus_step_id")
+                or (explained[-1] if explained else None)
+            )
+
+        if anchor:
+            outgoing = governance_data.get_outgoing_edges(anchor)
+            next_step_ids = sorted(set([e["to"] for e in outgoing]), key=governance_data.step_index)
+            state["next_step_ids"] = next_step_ids
+            state["anchor_step_id"] = anchor
+            state["needs_disambiguation"] = False
+            return state
+
     if intent in [
         "compare_steps",
         "ask_about_step",
@@ -69,24 +96,11 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         state["match_method"] = method
         state["match_confidence"] = confidence
 
-        if intent != "automation_request" and candidates and len(candidates) > 1:
+        if intent not in {"automation_request", "ask_next_step"} and candidates and len(candidates) > 1:
             state["needs_disambiguation"] = True
             state["intent"] = "ask_about_step"
         else:
             state["needs_disambiguation"] = False
-
-        if intent == "ask_next_step" and not focus_step_id and previous_state:
-            explained = previous_state.get("explained_step_ids") or []
-            anchor = (
-                previous_state.get("anchor_step_id")
-                or previous_state.get("focus_step_id")
-                or (explained[-1] if explained else None)
-            )
-            if anchor:
-                outgoing = governance_data.get_outgoing_edges(anchor)
-                next_step_ids = sorted(set([e["to"] for e in outgoing]), key=governance_data.step_index)
-                state["next_step_ids"] = next_step_ids
-                state["anchor_step_id"] = anchor
 
         if focus_step_id:
             step_details = governance_data.get_step_record(focus_step_id)
