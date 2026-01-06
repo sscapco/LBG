@@ -24,15 +24,36 @@ def validate_name_handler(user_input: Optional[str] = None) -> Dict[str, Any]:
         else:
             params = user_input
 
-        name = params.get("name")
-        dp_type = params.get("type")
+        name = (params.get("name") or "").strip() or None
+        dp_type = (params.get("type") or "").strip() or None
         max_len = params.get("max_len", 75)
 
-        if not name:
-            return {"status": "error", "message": "Missing required field: 'name'"}
+        if not name or not dp_type:
+            missing = []
+            if not name:
+                missing.append("name")
+            if not dp_type:
+                missing.append("type")
 
-        if not dp_type:
-            return {"status": "error", "message": "Missing required field: 'type' (must be ODP, FDP, or CDP)"}
+            prompt_lines = ["To run name validation, I still need:"]
+            if "name" in missing:
+                prompt_lines.append("- The data product name (e.g., AL12345.CustomerData)")
+            if "type" in missing:
+                prompt_lines.append("- The data product type (ODP, FDP, or CDP)")
+
+            expected = {"max_len": 75}
+            if name:
+                expected["name"] = name
+            if dp_type:
+                expected["type"] = dp_type
+            else:
+                expected["type"] = "ODP"
+
+            return {
+                "status": "needs_input",
+                "prompt": "\n".join(prompt_lines),
+                "expected_format": expected,
+            }
 
         result = check_name_both(name, dp_type, max_len)
 
@@ -135,4 +156,3 @@ def format_automation_result_for_user(result: Dict[str, Any]) -> str:
         return f"✅ {message}"
 
     return "Unexpected result format"
-

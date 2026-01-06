@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict, Any
 
 from cortex_connection import cortex
 
@@ -32,10 +32,24 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         if a_id and b_id and a_id != b_id:
             state["referenced_ids"] = [a_id, b_id]
 
-    intent, intent_confidence = _classify_intent(user_message, previous_state)
+    intent, intent_confidence, intent_meta = _classify_intent(user_message, previous_state)
     state["intent"] = intent
+    if intent_meta:
+        state["query_analysis"] = intent_meta
+
+        # If the classifier extracted a comparison pair, resolve each side to a step.
+        comp = intent_meta.get("comparison")
+        if comp and not state.get("referenced_ids"):
+            a_term = _normalize_term(str(comp.get("a", "")))
+            b_term = _normalize_term(str(comp.get("b", "")))
+            if a_term and b_term:
+                a_id = _map_term_to_step_id(a_term, governance_data)
+                b_id = _map_term_to_step_id(b_term, governance_data)
+                if a_id and b_id and a_id != b_id:
+                    state["referenced_ids"] = [a_id, b_id]
 
     if intent in [
+        "compare_steps",
         "ask_about_step",
         "ask_next_step",
         "ask_previous_step",
@@ -44,7 +58,11 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         "automation_request",
         "clarification_needed",
     ]:
-        focus_step_id, candidates, method, confidence = _identify_steps(user_message, previous_state, intent)
+        # If this is a comparison and we already resolved two steps, skip single-step matching.
+        if intent == "compare_steps" and (state.get("referenced_ids") and len(state["referenced_ids"]) >= 2):
+            focus_step_id, candidates, method, confidence = None, [], "comparison", 1.0
+        else:
+            focus_step_id, candidates, method, confidence = _identify_steps(user_message, previous_state, intent)
 
         state["focus_step_id"] = focus_step_id
         state["candidate_step_ids"] = candidates
@@ -58,7 +76,12 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
             state["needs_disambiguation"] = False
 
         if intent == "ask_next_step" and not focus_step_id and previous_state:
-            anchor = previous_state.get("anchor_step_id") or previous_state.get("focus_step_id")
+            explained = previous_state.get("explained_step_ids") or []
+            anchor = (
+                previous_state.get("anchor_step_id")
+                or previous_state.get("focus_step_id")
+                or (explained[-1] if explained else None)
+            )
             if anchor:
                 outgoing = governance_data.get_outgoing_edges(anchor)
                 next_step_ids = sorted(set([e["to"] for e in outgoing]), key=governance_data.step_index)
@@ -85,7 +108,7 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
     return state
 
 
-def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[str, float]:
+def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[str, float, Optional[Dict[str, Any]]]:
     previous_focus = None
     if previous_state:
         previous_focus = previous_state.get("focus_step_id")
@@ -108,6 +131,7 @@ def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[st
             confidence = float(data.get("confidence", 0.5))
             allowed = {
                 "greeting",
+                "compare_steps",
                 "ask_about_step",
                 "ask_next_step",
                 "ask_previous_step",
@@ -118,26 +142,31 @@ def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[st
                 "unknown",
             }
             if intent in allowed and 0.0 <= confidence <= 1.0:
-                return intent, confidence
+                # Keep extra fields (e.g., comparison extraction) for downstream logic.
+                return intent, confidence, data
     except Exception:
         pass
 
     msg_lower = user_message.lower()
 
     if any(w in msg_lower for w in ["hello", "hi", "hey", "good morning", "good afternoon"]):
-        return "greeting", 0.8
+        return "greeting", 0.8, None
+
+    # Comparison intent (fallback heuristic)
+    if _extract_comparison_terms(user_message or ""):
+        return "compare_steps", 0.75, None
 
     if any(w in msg_lower for w in ["run", "execute", "validate", "check", "perform"]):
         if any(w in msg_lower for w in ["name", "validation", "odp", "fdp", "cdp"]):
-            return "automation_request", 0.85
+            return "automation_request", 0.85, None
 
     if any(w in msg_lower for w in ["next", "after", "then", "what do i do"]):
-        return "ask_next_step", 0.75
+        return "ask_next_step", 0.75, None
 
     if any(w in msg_lower for w in ["what is", "tell me about", "explain", "describe"]):
-        return "ask_about_step", 0.7
-
-    return "ask_about_step", 0.6
+        return "ask_about_step", 0.7, None
+    
+    return "ask_about_step", 0.6, None
 
 
 def _identify_steps(user_message: str, previous_state: dict = None, intent: str = "ask_about_step") -> Tuple[str, List[str], str, float]:
@@ -184,7 +213,8 @@ def _extract_comparison_terms(message: str) -> Tuple[str, str] | None:
 
     # Common comparison phrasings.
     patterns = [
-        r"(?i)\b(?:what'?s\s+the\s+)?difference\s+between\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:\?|$)",
+        # Accept minor variations/typos of "difference" by matching the stem.
+        r"(?i)\b(?:what'?s\s+the\s+)?differenc\w*\s+between\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:\?|$)",
         r"(?i)\bcompare\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:\?|$)",
         r"(?i)\b(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?:\?|$)",
     ]

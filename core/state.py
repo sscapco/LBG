@@ -32,6 +32,7 @@ class GovernanceState(TypedDict, total=False):
     completed_ids: Annotated[List[str], operator.add]  # Steps marked complete (accumulates)
     in_progress_ids: Annotated[List[str], operator.add]  # Steps marked in progress (accumulates)
     referenced_ids: List[str]  # All steps mentioned this turn
+    explained_step_ids: List[str]  # Steps explained this turn (used for follow-ups)
 
     # Automation
     automatable_step_id: Optional[str]  # Step that can be automated
@@ -65,6 +66,7 @@ class SessionState(TypedDict):
     last_completed_ids: List[str]
     last_in_progress_ids: List[str]
     last_referenced_ids: List[str]
+    last_explained_step_ids: List[str]
     last_automatable_step_id: Optional[str]
     last_automation_step: Optional[str]
     timestamp: str
@@ -82,6 +84,7 @@ def create_initial_state(user_message: str, session_id: str = "default") -> Gove
         completed_ids=[],
         in_progress_ids=[],
         referenced_ids=[],
+        explained_step_ids=[],
         automatable_step_id=None,
         automation_step=None,
         automation_result=None,
@@ -106,6 +109,7 @@ def state_to_session_state(state: GovernanceState) -> SessionState:
         last_completed_ids=state.get("completed_ids", []),
         last_in_progress_ids=state.get("in_progress_ids", []),
         last_referenced_ids=state.get("referenced_ids", []),
+        last_explained_step_ids=state.get("explained_step_ids", []),
         last_automatable_step_id=state.get("automatable_step_id"),
         last_automation_step=state.get("automation_step"),
         timestamp=state.get("timestamp", datetime.utcnow().isoformat() + "Z"),
@@ -124,8 +128,8 @@ def session_state_to_previous_state(session_state: Optional[SessionState]) -> Op
         "completed_ids": session_state.get("last_completed_ids", []),
         "in_progress_ids": session_state.get("last_in_progress_ids", []),
         "referenced_ids": session_state.get("last_referenced_ids", []),
+        "explained_step_ids": session_state.get("last_explained_step_ids", []),
         "automatable_step_id": session_state.get("last_automatable_step_id"),
         "automation_step": session_state.get("last_automation_step"),
         "timestamp": session_state.get("timestamp"),
     }
-

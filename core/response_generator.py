@@ -16,6 +16,7 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     referenced_ids = state.get("referenced_ids", []) or []
     if len(referenced_ids) >= 2:
         state["answer"] = _generate_comparison_response(state, referenced_ids[:2])
+        state["explained_step_ids"] = referenced_ids[:2]
         return state
 
     intent = state.get("intent")
@@ -30,6 +31,8 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
         state["answer"] = _generate_disambiguation_response(state)
     elif focus_step_id:
         state["answer"] = _generate_step_response(state)
+        state["referenced_ids"] = [focus_step_id]
+        state["explained_step_ids"] = [focus_step_id]
     elif intent == "ask_next_step":
         state["answer"] = _generate_next_step_response(state)
     else:

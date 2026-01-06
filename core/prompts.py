@@ -13,6 +13,7 @@ User message: "{user_message}"{context}
 
 Available intents:
 - greeting: General greeting or hello
+- compare_steps: Asking for differences/comparison between two steps/concepts
 - ask_about_step: Asking about a specific governance step
 - ask_next_step: Asking what comes next / what to do next
 - ask_previous_step: Asking what came before
@@ -26,7 +27,11 @@ Respond with ONLY a JSON object:
 {{
   "intent": "one of the above intents",
   "confidence": 0.0 to 1.0,
-  "reasoning": "brief explanation"
+  "reasoning": "brief explanation",
+  "comparison": null or {{
+    "a": "string (first concept/step mentioned)",
+    "b": "string (second concept/step mentioned)"
+  }}
 }}"""
 
 

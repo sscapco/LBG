@@ -60,13 +60,22 @@ def automation_handler_node(state: GovernanceState) -> GovernanceState:
 def detect_automation_request(message: str) -> bool:
     msg_lower = message.lower()
 
-    action_words = ["run", "execute", "validate", "check", "perform"]
+    action_words = ["run", "execute", "validate", "check", "perform", "verify"]
     has_action = any(word in msg_lower for word in action_words)
 
-    has_name = bool(re.search(r"\b[a-z]{2}\d{5}\.[a-z0-9.]+\b", msg_lower))
+    has_naming_intent = any(k in msg_lower for k in ["naming", "name check", "namechecker", "validate name"])
+
+    # JSON payload support: {"name":"...","type":"ODP"} etc.
+    has_json = bool(re.search(r"\{.*\}", msg_lower, flags=re.DOTALL))
+
+    # Prefer strict AppID.BusinessName; fall back to any dot-separated token string if the message
+    # is clearly about naming/validation.
+    has_strict_name = bool(re.search(r"\b[a-z]{2}\d{5}\.[a-z0-9.]+\b", msg_lower))
+    has_loose_name = bool(re.search(r"\b[a-z0-9]+(?:\.[a-z0-9]+)+\b", msg_lower))
+    has_name = has_strict_name or (has_naming_intent and has_loose_name) or has_json
     has_type = any(t in msg_lower for t in ["odp", "fdp", "cdp"])
 
-    return has_action and has_name and has_type
+    return (has_action or has_naming_intent) and has_name
 
 
 def _extract_automation_params(message: str, automation_step: str) -> Optional[str]:
@@ -76,11 +85,39 @@ def _extract_automation_params(message: str, automation_step: str) -> Optional[s
 
 
 def _extract_name_validation_params(message: str) -> Optional[str]:
-    name_match = re.search(r"([A-Z]{2}\d{5}\.[A-Za-z0-9.]+)", message, re.IGNORECASE)
-    if not name_match:
-        return None
+    # 1) JSON payload
+    match = re.search(r"\{.*\}", message or "", flags=re.DOTALL)
+    if match:
+        try:
+            payload = json.loads(match.group(0))
+            if isinstance(payload, dict) and ("name" in payload or "type" in payload):
+                name = payload.get("name")
+                dp_type = payload.get("type") or payload.get("dp_type")
+                max_len = payload.get("max_len", 75)
+                params = {}
+                if name:
+                    params["name"] = str(name).strip()
+                if dp_type:
+                    params["type"] = str(dp_type).strip().upper()
+                params["max_len"] = int(max_len) if str(max_len).isdigit() else 75
+                return json.dumps(params, ensure_ascii=False)
+        except Exception:
+            pass
 
-    name = name_match.group(1).strip()
+    # 2) Strict AppID.BusinessName pattern (best signal)
+    name_match = re.search(r"([A-Z]{2}\d{5}\.[A-Za-z0-9.]+)", message or "", re.IGNORECASE)
+    name = name_match.group(1).strip() if name_match else None
+
+    # 3) Loose dot-separated token string (only when message indicates naming)
+    if not name:
+        msg_lower = (message or "").lower()
+        if any(k in msg_lower for k in ["naming", "name", "validate", "check"]):
+            loose = re.search(r"\b([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)\b", message or "")
+            if loose:
+                name = loose.group(1).strip()
+
+    if not name:
+        return None
 
     msg_lower = message.lower()
     type_val = None
@@ -91,9 +128,8 @@ def _extract_name_validation_params(message: str) -> Optional[str]:
     elif "cdp" in msg_lower:
         type_val = "CDP"
 
-    if not type_val:
-        return None
-
-    params = {"name": name, "type": type_val, "max_len": 75}
+    # Allow missing dp_type; the tool will ask a follow-up instead of failing.
+    params = {"name": name, "max_len": 75}
+    if type_val:
+        params["type"] = type_val
     return json.dumps(params, ensure_ascii=False)
-
