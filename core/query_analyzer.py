@@ -22,6 +22,16 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
         seen = set()
         state["referenced_ids"] = [sid for sid in mentioned_ids if not (sid in seen or seen.add(sid))]
 
+    # If the user is explicitly comparing two concepts (not necessarily step IDs),
+    # try to resolve each side independently to a step.
+    comparison = _extract_comparison_terms(user_message or "")
+    if comparison and not state.get("referenced_ids"):
+        a_term, b_term = comparison
+        a_id = _map_term_to_step_id(a_term, governance_data)
+        b_id = _map_term_to_step_id(b_term, governance_data)
+        if a_id and b_id and a_id != b_id:
+            state["referenced_ids"] = [a_id, b_id]
+
     intent, intent_confidence = _classify_intent(user_message, previous_state)
     state["intent"] = intent
 
@@ -165,3 +175,55 @@ def _identify_steps(user_message: str, previous_state: dict = None, intent: str 
         return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
 
     return None, [], "no_match", 0.0
+
+
+def _extract_comparison_terms(message: str) -> Tuple[str, str] | None:
+    m = (message or "").strip()
+    if not m:
+        return None
+
+    # Common comparison phrasings.
+    patterns = [
+        r"(?i)\b(?:what'?s\s+the\s+)?difference\s+between\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:\?|$)",
+        r"(?i)\bcompare\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:\?|$)",
+        r"(?i)\b(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?:\?|$)",
+    ]
+    for pat in patterns:
+        match = re.search(pat, m)
+        if not match:
+            continue
+        a, b = match.group(1), match.group(2)
+        a = _normalize_term(a)
+        b = _normalize_term(b)
+        if a and b:
+            return a, b
+    return None
+
+
+def _normalize_term(term: str) -> str:
+    t = (term or "").strip().strip('"').strip("'").strip()
+    # Remove generic suffixes like "step"/"steps".
+    t = re.sub(r"(?i)\bsteps?\b", "", t).strip()
+    # Remove trailing punctuation.
+    t = t.strip(" .,:;—-")
+    # Keep short phrases only (avoid whole paragraphs).
+    if len(t) > 80:
+        t = t[:80].rsplit(" ", 1)[0].strip()
+    return t
+
+
+def _map_term_to_step_id(term: str, governance_data) -> str | None:
+    # Prefer deterministic match when the term is a shorthand/acronym (e.g., "dpwg", "doi").
+    sid, _, conf = governance_data.deterministic_match(term)
+    if sid and conf >= 0.85:
+        return sid
+
+    # Otherwise allow semantic match for the term.
+    candidates = governance_data.semantic_candidates(term, top_k=1)
+    if not candidates:
+        return None
+    best = candidates[0]
+    # Conservative threshold so we don't force a wrong comparison.
+    if float(best.get("score", 0.0)) >= 0.33:
+        return best["id"]
+    return None
