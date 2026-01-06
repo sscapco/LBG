@@ -5,12 +5,17 @@ from cortex_connection import cortex
 
 from .cortex_utils import cortex_chat_text
 from .governance_data import get_governance_data
-from .prompts import disambiguation_prompt, fallback_prompt, next_step_prompt, step_response_prompt
+from .prompts import compare_steps_prompt, disambiguation_prompt, fallback_prompt, next_step_prompt, step_response_prompt
 from .state import GovernanceState
 
 
 def response_generator_node(state: GovernanceState) -> GovernanceState:
     if state.get("answer"):
+        return state
+
+    referenced_ids = state.get("referenced_ids", []) or []
+    if len(referenced_ids) >= 2:
+        state["answer"] = _generate_comparison_response(state, referenced_ids[:3])
         return state
 
     intent = state.get("intent")
@@ -95,7 +100,7 @@ def _generate_step_response(state: GovernanceState) -> str:
 
     automation_info = ""
     if automatable and automation_step:
-        from automation_registry import get_automation_info
+        from .automation_registry import get_automation_info
 
         auto_info = get_automation_info(automation_step)
         if auto_info:
@@ -166,3 +171,34 @@ def _generate_fallback_response(state: GovernanceState) -> str:
         )
     )
 
+
+def _generate_comparison_response(state: GovernanceState, step_ids: List[str]) -> str:
+    governance_data = get_governance_data()
+    user_message = state.get("user_message", "")
+
+    details: List[Dict] = []
+    missing: List[str] = []
+    for sid in step_ids:
+        rec = governance_data.get_step_record(sid)
+        if not rec:
+            missing.append(sid)
+            continue
+        details.append(rec)
+
+    if missing:
+        known = ", ".join([d.get("id", "") for d in details if d.get("id")])
+        missing_str = ", ".join(missing)
+        if known:
+            return f"I can compare {known}, but I couldn't find information for {missing_str}. Can you check the step ID(s)?"
+        return f"I couldn't find information for {missing_str}. Can you check the step ID(s)?"
+
+    prompt = compare_steps_prompt(user_message, details)
+    messages = [{"role": "user", "content": prompt}]
+    return cortex_chat_text(
+        cortex.get_chat_response(
+            messages,
+            max_tokens=1200,
+            temperature=0.0,
+            thinking_enabled=False,
+        )
+    )

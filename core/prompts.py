@@ -128,3 +128,19 @@ Create a brief, helpful response that:
 
 Keep it friendly and concise (2-3 sentences)."""
 
+
+def compare_steps_prompt(user_message: str, steps: List[Dict[str, Any]]) -> str:
+    return f"""The user asked: "{user_message}"
+
+They are asking to compare multiple governance steps.
+
+Here are the steps (do not invent details not present):
+{json.dumps(steps, indent=2)}
+
+Write a comparison that:
+1. Names each step (ID + name) and its purpose (1 line each)
+2. Explains the key differences (scope, approvals/sign-off, outputs, who is involved) in clear bullets
+3. Calls out how the steps relate (sequence, prerequisites, or “often confused with”)
+4. Ends with 1 short clarifying question only if the user intent is still ambiguous (otherwise don’t)
+
+Be concise and practical."""

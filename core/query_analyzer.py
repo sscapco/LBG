@@ -15,6 +15,13 @@ def analyze_query_node(state: GovernanceState) -> GovernanceState:
     previous_state = state.get("previous_state")
     governance_data = get_governance_data()
 
+    # Track any explicit step references mentioned by the user (e.g., "S2 vs S21").
+    mentioned_ids = [m.upper() for m in re.findall(r"\bS\d{1,3}\b", user_message or "", flags=re.IGNORECASE)]
+    if mentioned_ids:
+        # Keep order but dedupe.
+        seen = set()
+        state["referenced_ids"] = [sid for sid in mentioned_ids if not (sid in seen or seen.add(sid))]
+
     intent, intent_confidence = _classify_intent(user_message, previous_state)
     state["intent"] = intent
 
