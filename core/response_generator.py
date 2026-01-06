@@ -15,7 +15,7 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
 
     referenced_ids = state.get("referenced_ids", []) or []
     if len(referenced_ids) >= 2:
-        state["answer"] = _generate_comparison_response(state, referenced_ids[:3])
+        state["answer"] = _generate_comparison_response(state, referenced_ids[:2])
         return state
 
     intent = state.get("intent")
