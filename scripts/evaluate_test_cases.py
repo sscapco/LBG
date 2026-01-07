@@ -14,6 +14,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 STEP_ID_RE = re.compile(r"\bS\d{1,3}\b", flags=re.IGNORECASE)
 
+# Ensure repo root is on sys.path when running as a script (e.g. `python scripts/evaluate_test_cases.py`),
+# since Python sets sys.path[0] to the script directory (./scripts) not the repo root.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 
 @dataclass
 class Expected:
@@ -197,6 +203,10 @@ def summarize(results: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 
     ok_results = [r for r in results if isinstance(r, dict) and "expected" in r and "scoring" in r]
     error_results = [r for r in results if isinstance(r, dict) and "error" in r and ("expected" not in r or "scoring" not in r)]
+    error_counts: Dict[str, int] = {}
+    for r in error_results:
+        err = str(r.get("error") or "unknown")
+        error_counts[err] = error_counts.get(err, 0) + 1
 
     def _count(pred) -> int:
         return sum(1 for r in ok_results if pred(r))
@@ -218,6 +228,7 @@ def summarize(results: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             "clarifying_question_rate": _count(lambda r: r["scoring"]["asked_question"]) / max(1, len(ok_results)),
             "error_rate": len(error_results) / max(1, total),
         },
+        "error_samples": dict(sorted(error_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]),
         "by_type": {},
     }
 
