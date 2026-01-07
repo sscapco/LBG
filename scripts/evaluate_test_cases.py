@@ -195,28 +195,34 @@ def summarize(results: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     if total == 0:
         return {"total": 0}
 
-    def _count(pred) -> int:
-        return sum(1 for r in results if pred(r))
+    ok_results = [r for r in results if isinstance(r, dict) and "expected" in r and "scoring" in r]
+    error_results = [r for r in results if isinstance(r, dict) and "error" in r and ("expected" not in r or "scoring" not in r)]
 
-    out_of_process = [r for r in results if r["expected"]["out_of_process"]]
-    in_process = [r for r in results if not r["expected"]["out_of_process"]]
+    def _count(pred) -> int:
+        return sum(1 for r in ok_results if pred(r))
+
+    out_of_process = [r for r in ok_results if r["expected"].get("out_of_process")]
+    in_process = [r for r in ok_results if not r["expected"].get("out_of_process")]
 
     summary: Dict[str, Any] = {
         "total": total,
+        "ok": len(ok_results),
+        "errors": len(error_results),
         "in_process": len(in_process),
         "out_of_process": len(out_of_process),
         "metrics": {
             "hit_any_rate": _count(lambda r: r["scoring"]["hit_any"]) / max(1, len(in_process)),
             "hit_likely_rate": _count(lambda r: r["scoring"]["hit_likely"]) / max(1, len(in_process)),
             "out_of_process_ok_rate": _count(lambda r: r["scoring"]["out_of_process_ok"]) / max(1, len(out_of_process)),
-            "disambiguation_trigger_rate": _count(lambda r: r["scoring"]["needs_disambiguation"]) / total,
-            "clarifying_question_rate": _count(lambda r: r["scoring"]["asked_question"]) / total,
+            "disambiguation_trigger_rate": _count(lambda r: r["scoring"]["needs_disambiguation"]) / max(1, len(ok_results)),
+            "clarifying_question_rate": _count(lambda r: r["scoring"]["asked_question"]) / max(1, len(ok_results)),
+            "error_rate": len(error_results) / max(1, total),
         },
         "by_type": {},
     }
 
     by_type: Dict[str, List[Dict[str, Any]]] = {}
-    for r in results:
+    for r in ok_results:
         by_type.setdefault(r["type"] or "unknown", []).append(r)
 
     for t, group in by_type.items():
@@ -300,6 +306,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "type": test_type,
                         "session_id": session_id,
                         "user_prompt": prompt,
+                        "expected": {
+                            "out_of_process": expected.out_of_process,
+                            "likely": sorted(expected.likely),
+                            "possible": sorted(expected.possible),
+                            "clarifying_questions": expected_clar,
+                        },
                         "error": repr(e),
                     }
                 )
@@ -317,4 +329,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
