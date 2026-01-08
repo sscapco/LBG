@@ -11,17 +11,22 @@ def classify_intent_prompt(user_message: str, previous_focus_step_id: Optional[s
 
 User message: "{user_message}"{context}
 
-Available intents:
-- greeting: General greeting or hello
-- compare_steps: Asking for differences/comparison between two steps/concepts
-- ask_about_step: Asking about a specific governance step
-- ask_next_step: Asking what comes next / what to do next
-- ask_previous_step: Asking what came before
-- mark_complete: Marking a step as complete
-- mark_in_progress: Marking a step as in progress
-- automation_request: Requesting to run an automation (e.g., validate name)
-- clarification_needed: Unclear or needs more info
+Available intents with examples:
+- greeting: General greeting or hello (e.g., "Hi", "Hello", "Good morning")
+- compare_steps: Asking for differences/comparison between two steps/concepts (e.g., "What's the difference between X and Y?", "How does A compare to B?")
+- ask_about_step: Asking about a specific governance step or describing work done (e.g., "I've completed the DOI form", "We created a record in ServiceNow", "I raised a JIRA ticket", "What do I need to do for security?")
+- ask_next_step: Asking what comes next / what to do next (e.g., "What's next?", "What should I do after this?", "Where do we go from here?")
+- ask_previous_step: Asking what came before (e.g., "What step comes before this?", "What did I need to do earlier?")
+- mark_complete: Explicitly marking a step as complete (e.g., "Mark S1 as complete", "I finished step 2")
+- mark_in_progress: Explicitly marking a step as in progress (e.g., "Mark S3 as in progress", "I'm working on step 5")
+- automation_request: Explicitly requesting to run an automation (e.g., "Run the naming validation", "Can you validate this name?", "Execute the check")
+- clarification_needed: Unclear or needs more info (e.g., "What?", "Huh?", "I don't understand")
 - unknown: Cannot determine
+
+IMPORTANT:
+- If the user describes completing work, reaching a milestone, or mentions specific artifacts/activities (like "raised a ticket", "completed a form", "got endorsement", "delivered an artefact"), classify as "ask_about_step"
+- Only use "greeting" for actual greetings, NOT for questions about work or progress
+- Questions starting with "what", "where", "when", "how", "why" about governance activities should be "ask_about_step"
 
 Respond with ONLY a JSON object:
 {{
@@ -153,3 +158,34 @@ Then provide:
 - "Key differences:" 2–4 bullet points that compare them based ONLY on the two purposes/descriptions above.
 
 Do not ask clarifying questions unless a step is missing."""
+
+
+def rerank_candidates_prompt(user_message: str, candidates: List[Dict[str, Any]]) -> str:
+    return f"""Given a user query about a governance workflow, determine which step best matches their situation.
+
+User query: "{user_message}"
+
+Candidate steps (in order of initial similarity):
+{json.dumps(candidates, indent=2)}
+
+Your task:
+1. Carefully read the user query and identify the KEY ACTIONS, ARTIFACTS, or MILESTONES mentioned
+2. For each candidate, evaluate how well it matches those key elements
+3. Consider:
+   - Does the step name match the activity described?
+   - Does the purpose align with what the user is asking about?
+   - Does the description mention the specific artifacts/milestones the user referenced?
+4. Return ONLY the step ID that BEST matches, or "AMBIGUOUS" if multiple steps genuinely match
+
+Respond with ONLY a JSON object:
+{{
+  "best_match": "step_id or AMBIGUOUS",
+  "confidence": 0.0 to 1.0,
+  "reasoning": "brief explanation of why this step matches best",
+  "ambiguous_candidates": ["step_id1", "step_id2"] or null
+}}
+
+IMPORTANT:
+- If the user mentions a specific artifact (e.g., "JIRA ticket", "DOI form", "Threat Model", "ServiceNow record"), prioritize steps that explicitly mention it
+- If multiple steps could genuinely apply, return "AMBIGUOUS" and list the candidates
+- Be conservative: only return a single best_match if you're confident (>0.7)"""

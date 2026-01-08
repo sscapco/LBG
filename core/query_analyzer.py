@@ -6,7 +6,7 @@ from cortex_connection import cortex
 
 from .cortex_utils import cortex_chat_text, parse_json_object
 from .governance_data import get_governance_data
-from .prompts import classify_intent_prompt
+from .prompts import classify_intent_prompt, rerank_candidates_prompt
 from .state import GovernanceState
 
 
@@ -163,61 +163,146 @@ def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[st
 
     msg_lower = user_message.lower()
 
-    if any(w in msg_lower for w in ["hello", "hi", "hey", "good morning", "good afternoon"]):
-        return "greeting", 0.8, None
+    # Very strict greeting check - must be primarily a greeting, not a question
+    greeting_words = ["hello", "hi", "hey", "good morning", "good afternoon", "good evening"]
+    if any(msg_lower.strip().startswith(w) for w in greeting_words):
+        # Only classify as greeting if it's short and doesn't contain question words
+        if len(msg_lower.split()) <= 5 and not any(q in msg_lower for q in ["what", "where", "when", "how", "why", "which", "?"]):
+            return "greeting", 0.8, None
 
     # Comparison intent (fallback heuristic)
     if _extract_comparison_terms(user_message or ""):
         return "compare_steps", 0.75, None
 
+    # Explicit automation requests with action verbs + automation keywords
     if any(w in msg_lower for w in ["run", "execute", "validate", "check", "perform"]):
-        if any(w in msg_lower for w in ["name", "validation", "odp", "fdp", "cdp"]):
+        if any(w in msg_lower for w in ["name", "validation", "naming"]):
             return "automation_request", 0.85, None
 
-    if any(w in msg_lower for w in ["next", "after", "then", "what do i do"]):
+    # Next step indicators - but not if describing completed work
+    if any(phrase in msg_lower for phrase in ["what's next", "what do i do next", "what comes next", "where do we go from here"]):
         return "ask_next_step", 0.75, None
 
-    if any(w in msg_lower for w in ["what is", "tell me about", "explain", "describe"]):
-        return "ask_about_step", 0.7, None
-    
-    return "ask_about_step", 0.6, None
+    # If message contains "next" or "after" but also describes work done, it's asking about current step
+    has_next_keywords = any(w in msg_lower for w in ["next", "after"])
+    has_work_keywords = any(w in msg_lower for w in ["raised", "created", "completed", "delivered", "finished", "got", "obtained", "submitted"])
+
+    if has_next_keywords and not has_work_keywords:
+        return "ask_next_step", 0.70, None
+
+    # Default to asking about a step - this is the most common intent
+    return "ask_about_step", 0.65, None
 
 
 def _identify_steps(user_message: str, previous_state: dict = None, intent: str = "ask_about_step") -> Tuple[str, List[str], str, float]:
     governance_data = get_governance_data()
 
+    # Try deterministic match first - now includes normalized matching
     focus_id, method, confidence = governance_data.deterministic_match(user_message)
-    if focus_id and confidence >= 0.85 and method != "embedding_match":
+    # Accept deterministic matches with lower confidence threshold (was 0.85)
+    if focus_id and confidence >= 0.80:
         return focus_id, [focus_id], method, confidence
 
+    # Fall back to semantic matching
     candidates = governance_data.semantic_candidates(user_message, top_k=5)
     if len(candidates) == 0:
         return None, [], "no_match", 0.0
 
+    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+        print("\nDEBUG: semantic_candidates (top 5)")
+        for c in candidates[:5]:
+            print(
+                f"  {c['id']}: score={c.get('score'):.3f} "
+                f"(emb={c.get('embedding_score', 0.0):.3f}, lex={c.get('lexical_score', 0.0):.3f}, "
+                f"name={c.get('name_similarity', 0.0):.3f}, desc={c.get('description_similarity', 0.0):.3f})"
+            )
+
     if len(candidates) >= 2:
         c1, c2 = candidates[0], candidates[1]
 
-        if os.getenv("GOV_DEBUG_MATCHING") == "1":
-            print("\nDEBUG: semantic_candidates (top 5)")
-            for c in candidates[:5]:
-                print(
-                    f"  {c['id']}: score={c.get('score'):.3f} "
-                    f"(emb={c.get('embedding_score', 0.0):.3f}, lex={c.get('lexical_score', 0.0):.3f})"
-                )
-
+        # Lexical tiebreak: if top candidate has strong lexical match
         lex1 = float(c1.get("lexical_score", 0.0) or 0.0)
         lex2 = float(c2.get("lexical_score", 0.0) or 0.0)
-        if lex1 >= 0.50 and (lex1 - lex2) >= 0.20 and c1["score"] >= 0.30:
+        # Relaxed thresholds: was (lex1 >= 0.50, gap >= 0.20, score >= 0.30)
+        if lex1 >= 0.40 and (lex1 - lex2) >= 0.15 and c1["score"] >= 0.25:
             return c1["id"], [c1["id"]], "lexical_tiebreak", c1["score"]
 
-        if c1["score"] >= 0.40 and c2["score"] >= 0.35 and (c1["score"] - c2["score"]) <= 0.15:
+        # Ambiguity detection: if top candidates are close, trigger disambiguation
+        # More sensitive thresholds to catch ambiguous cases earlier
+        # Old: c1 >= 0.40, c2 >= 0.35, gap <= 0.15
+        # New: c1 >= 0.25, c2 >= 0.20, gap <= 0.20
+        if c1["score"] >= 0.25 and c2["score"] >= 0.20 and (c1["score"] - c2["score"]) <= 0.20:
             candidate_ids = [c["id"] for c in candidates[:3]]
             return c1["id"], candidate_ids, "embedding_match_ambiguous", c1["score"]
 
-    if candidates[0]["score"] >= 0.30:
+    # For borderline cases (score between 0.20 and 0.40), use LLM reranking
+    if 0.20 <= candidates[0]["score"] < 0.40 and len(candidates) >= 2:
+        reranked_id, reranked_candidates = _llm_rerank_candidates(user_message, candidates[:3])
+        if reranked_id and reranked_id != "AMBIGUOUS":
+            return reranked_id, [reranked_id], "llm_rerank", candidates[0]["score"]
+        elif reranked_id == "AMBIGUOUS" and reranked_candidates:
+            return reranked_candidates[0], reranked_candidates, "llm_rerank_ambiguous", candidates[0]["score"]
+
+    # Single match threshold - lowered from 0.30 to 0.20 for better recall
+    if candidates[0]["score"] >= 0.20:
         return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
 
     return None, [], "no_match", 0.0
+
+
+def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[Optional[str], List[str]]:
+    """Use LLM to intelligently rerank candidates by understanding context."""
+    governance_data = get_governance_data()
+
+    # Prepare candidate details for LLM
+    candidate_details = []
+    for c in candidates:
+        step_record = governance_data.get_step_record(c["id"])
+        if step_record:
+            candidate_details.append({
+                "id": step_record["id"],
+                "name": step_record["name"],
+                "purpose": step_record["purpose"],
+                "description": step_record["description"][:500],  # Truncate long descriptions
+                "initial_score": c["score"],
+            })
+
+    if not candidate_details:
+        return None, []
+
+    prompt = rerank_candidates_prompt(user_message, candidate_details)
+    messages = [{"role": "user", "content": prompt}]
+
+    try:
+        response = cortex_chat_text(
+            cortex.get_chat_response(
+                messages,
+                max_tokens=300,
+                temperature=0.0,
+                thinking_enabled=False,
+            )
+        )
+
+        data = parse_json_object(response, {"best_match": str, "confidence": (int, float)})
+        if data:
+            best_match = data.get("best_match", "").strip().upper()
+            confidence = float(data.get("confidence", 0.0))
+            ambiguous = data.get("ambiguous_candidates")
+
+            # Only trust high-confidence LLM decisions
+            if confidence >= 0.65:
+                if best_match == "AMBIGUOUS" and isinstance(ambiguous, list) and ambiguous:
+                    return "AMBIGUOUS", [s.strip().upper() for s in ambiguous if s]
+                elif best_match and best_match != "AMBIGUOUS":
+                    # Verify it's one of the candidates
+                    if any(c["id"] == best_match for c in candidate_details):
+                        return best_match, []
+
+    except Exception:
+        pass
+
+    # Fallback: return None to use original ranking
+    return None, []
 
 
 def _extract_comparison_terms(message: str) -> Tuple[str, str] | None:

@@ -14,8 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 STEP_ID_RE = re.compile(r"\bS\d{1,3}\b", flags=re.IGNORECASE)
 
-# Ensure repo root is on sys.path when running as a script (e.g. `python scripts/evaluate_test_cases.py`),
-# since Python sets sys.path[0] to the script directory (./scripts) not the repo root.
+# Ensure repo root is on sys.path when running as a script 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
