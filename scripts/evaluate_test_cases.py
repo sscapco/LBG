@@ -132,6 +132,7 @@ def evaluate_one(
     # Import here so the script can be imported without side effects.
     from core.state import create_initial_state, session_state_to_previous_state, state_to_session_state
     from core.workflow import governance_graph
+    from core.governance_data import get_governance_data
 
     previous_session = session_store.get(session_id)
     previous_state = session_state_to_previous_state(previous_session)
@@ -145,6 +146,19 @@ def evaluate_one(
     answer = final_state.get("answer") or ""
     predicted = predicted_step_ids_from_state(final_state)
     predicted_set = set(predicted)
+
+    governance_data = get_governance_data()
+    top_candidates = governance_data.semantic_candidates(prompt, top_k=10)
+    top_by_id = {c["id"]: c for c in top_candidates}
+    returned_scores: Dict[str, Dict[str, Any]] = {}
+    for sid in predicted:
+        c = top_by_id.get(sid)
+        if c:
+            returned_scores[sid] = {
+                "score": c.get("score"),
+                "embedding_score": c.get("embedding_score"),
+                "lexical_score": c.get("lexical_score"),
+            }
 
     # Scoring
     hit_likely = bool(expected_step_ids.likely & predicted_set)
@@ -181,6 +195,8 @@ def evaluate_one(
             "next_step_ids": final_state.get("next_step_ids", []),
             "needs_disambiguation": needs_disambiguation,
             "predicted_step_ids": predicted,
+            "returned_step_scores": returned_scores,
+            "top_semantic_candidates": top_candidates,
         },
         "scoring": {
             "hit_likely": hit_likely,
