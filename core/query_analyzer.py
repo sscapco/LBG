@@ -197,10 +197,10 @@ def _classify_intent(user_message: str, previous_state: dict = None) -> Tuple[st
 def _identify_steps(user_message: str, previous_state: dict = None, intent: str = "ask_about_step") -> Tuple[str, List[str], str, float]:
     governance_data = get_governance_data()
 
-    # Try deterministic match first - now includes normalized matching
+    # Try deterministic match first - ID regex and aliases only (no substring)
     focus_id, method, confidence = governance_data.deterministic_match(user_message)
-    # Accept deterministic matches with lower confidence threshold (was 0.85)
-    if focus_id and confidence >= 0.80:
+    # Only accept high-confidence deterministic matches (ID/alias, not substring)
+    if focus_id and method in ["id_match", "alias_match"] and confidence >= 0.90:
         return focus_id, [focus_id], method, confidence
 
     # Fall back to semantic matching
@@ -217,37 +217,32 @@ def _identify_steps(user_message: str, previous_state: dict = None, intent: str 
                 f"name={c.get('name_similarity', 0.0):.3f}, desc={c.get('description_similarity', 0.0):.3f})"
             )
 
-    if len(candidates) >= 2:
-        c1, c2 = candidates[0], candidates[1]
+    # CRITICAL: Apply strict thresholds to filter out weak matches
+    # embedding_score >= 0.5: ensures semantic relevance
+    # lexical_score >= 0.3: ensures meaningful keyword overlap
+    valid_candidates = [
+        c for c in candidates
+        if c.get("embedding_score", 0.0) >= 0.5 and c.get("lexical_score", 0.0) >= 0.3
+    ]
 
-        # Lexical tiebreak: if top candidate has strong lexical match
-        lex1 = float(c1.get("lexical_score", 0.0) or 0.0)
-        lex2 = float(c2.get("lexical_score", 0.0) or 0.0)
-        # Relaxed thresholds: was (lex1 >= 0.50, gap >= 0.20, score >= 0.30)
-        if lex1 >= 0.40 and (lex1 - lex2) >= 0.15 and c1["score"] >= 0.25:
-            return c1["id"], [c1["id"]], "lexical_tiebreak", c1["score"]
+    if not valid_candidates:
+        # No candidates meet thresholds = likely out-of-scope or no relevant match
+        return None, [], "below_threshold", 0.0
 
-        # Ambiguity detection: if top candidates are close, trigger disambiguation
-        # More sensitive thresholds to catch ambiguous cases earlier
-        # Old: c1 >= 0.40, c2 >= 0.35, gap <= 0.15
-        # New: c1 >= 0.25, c2 >= 0.20, gap <= 0.20
-        if c1["score"] >= 0.25 and c2["score"] >= 0.20 and (c1["score"] - c2["score"]) <= 0.20:
-            candidate_ids = [c["id"] for c in candidates[:3]]
-            return c1["id"], candidate_ids, "embedding_match_ambiguous", c1["score"]
+    # Use LLM to validate scope and select best match from valid candidates
+    validated_ids, validation_result, llm_confidence = _llm_validate_scope(user_message, valid_candidates[:3])
 
-    # For borderline cases (score between 0.20 and 0.40), use LLM reranking
-    if 0.20 <= candidates[0]["score"] < 0.40 and len(candidates) >= 2:
-        reranked_id, reranked_candidates = _llm_rerank_candidates(user_message, candidates[:3])
-        if reranked_id and reranked_id != "AMBIGUOUS":
-            return reranked_id, [reranked_id], "llm_rerank", candidates[0]["score"]
-        elif reranked_id == "AMBIGUOUS" and reranked_candidates:
-            return reranked_candidates[0], reranked_candidates, "llm_rerank_ambiguous", candidates[0]["score"]
+    if validation_result == "out_of_scope":
+        return None, [], "out_of_scope", llm_confidence
+    elif validation_result == "no_match":
+        return None, [], "no_match_validated", llm_confidence
+    elif validation_result == "ambiguous" and validated_ids:
+        return validated_ids[0], validated_ids, "llm_validated_ambiguous", llm_confidence
+    elif validation_result == "valid" and validated_ids:
+        return validated_ids[0], validated_ids, "llm_validated", llm_confidence
 
-    # Single match threshold - lowered from 0.30 to 0.20 for better recall
-    if candidates[0]["score"] >= 0.20:
-        return candidates[0]["id"], [candidates[0]["id"]], "embedding_match", candidates[0]["score"]
-
-    return None, [], "no_match", 0.0
+    # Fallback: if LLM validation fails, return None
+    return None, [], "validation_failed", 0.0
 
 
 def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[Optional[str], List[str]]:
@@ -303,6 +298,82 @@ def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) 
 
     # Fallback: return None to use original ranking
     return None, []
+
+
+def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[List[str], str, float]:
+    """
+    Use LLM to validate if query is in-scope and select best matching step(s).
+
+    Returns:
+        (step_ids, validation_result, confidence)
+        - step_ids: List of step IDs (empty if out of scope or no match)
+        - validation_result: "valid", "ambiguous", "no_match", or "out_of_scope"
+        - confidence: 0.0 to 1.0
+    """
+    governance_data = get_governance_data()
+
+    # Prepare candidate details for LLM with full context
+    candidate_details = []
+    for c in candidates:
+        step_record = governance_data.get_step_record(c["id"])
+        if step_record:
+            candidate_details.append({
+                "id": step_record["id"],
+                "name": step_record["name"],
+                "purpose": step_record["purpose"],
+                "description": step_record["description"][:600],  # Include more context
+                "embedding_score": c.get("embedding_score", 0.0),
+                "lexical_score": c.get("lexical_score", 0.0),
+                "overall_score": c.get("score", 0.0),
+            })
+
+    if not candidate_details:
+        return [], "no_match", 0.0
+
+    from core.prompts import validate_scope_prompt
+    prompt = validate_scope_prompt(user_message, candidate_details)
+    messages = [{"role": "user", "content": prompt}]
+
+    try:
+        response = cortex_chat_text(
+            cortex.get_chat_response(
+                messages,
+                max_tokens=400,
+                temperature=0.0,
+                thinking_enabled=False,
+            )
+        )
+
+        data = parse_json_object(response, {"scope": str, "validation": str, "confidence": (int, float)})
+        if data:
+            scope = data.get("scope", "").upper()
+            validation = data.get("validation", "").upper()
+            confidence = float(data.get("confidence", 0.0))
+            step_ids = data.get("step_ids") or []
+
+            # Normalize step IDs
+            step_ids = [str(sid).strip().upper() for sid in step_ids if sid]
+
+            # Map LLM response to our validation result
+            if scope == "OUT_OF_SCOPE":
+                return [], "out_of_scope", confidence
+            elif validation == "NO_MATCH":
+                return [], "no_match", confidence
+            elif validation == "AMBIGUOUS" and step_ids:
+                return step_ids, "ambiguous", confidence
+            elif validation == "VALID" and step_ids:
+                # Verify step IDs are from candidates
+                valid_ids = [sid for sid in step_ids if any(c["id"] == sid for c in candidate_details)]
+                if valid_ids:
+                    return valid_ids, "valid", confidence
+
+    except Exception as e:
+        # Log error but don't fail the pipeline
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"DEBUG: LLM validation failed: {e}")
+
+    # Fallback: treat as no match if LLM fails
+    return [], "no_match", 0.0
 
 
 def _extract_comparison_terms(message: str) -> Tuple[str, str] | None:

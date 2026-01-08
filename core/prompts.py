@@ -189,3 +189,44 @@ IMPORTANT:
 - If the user mentions a specific artifact (e.g., "JIRA ticket", "DOI form", "Threat Model", "ServiceNow record"), prioritize steps that explicitly mention it
 - If multiple steps could genuinely apply, return "AMBIGUOUS" and list the candidates
 - Be conservative: only return a single best_match if you're confident (>0.7)"""
+
+
+def validate_scope_prompt(user_message: str, candidates: List[Dict[str, Any]]) -> str:
+    """Prompt for LLM to validate if query is in-scope and which candidates match."""
+    return f"""You are validating whether a user query relates to a governance workflow.
+
+User query: "{user_message}"
+
+Top candidate steps from semantic matching:
+{json.dumps(candidates, indent=2)}
+
+Your task:
+1. **Scope Check**: Determine if this query is about the governance workflow at all
+   - IN_SCOPE: Query asks about governance steps, processes, requirements, or describes work done
+   - OUT_OF_SCOPE: Query is unrelated (greetings, weather, general questions, off-topic)
+
+2. **If IN_SCOPE**: Determine which step(s) best match
+   - Check if the query describes activities, artifacts, or milestones mentioned in step purposes/descriptions
+   - Return step ID(s) if there's a clear match
+   - Return AMBIGUOUS if multiple steps apply equally
+   - Return NO_MATCH if query is in-scope but doesn't match any specific step well
+
+3. **Be CONSERVATIVE**:
+   - If semantic similarity seems weak or coincidental, return OUT_OF_SCOPE or NO_MATCH
+   - Only return VALID with step IDs if you're confident (>0.7) there's a real match
+
+Respond with ONLY a JSON object:
+{{
+  "scope": "IN_SCOPE" | "OUT_OF_SCOPE",
+  "validation": "VALID" | "NO_MATCH" | "AMBIGUOUS",
+  "step_ids": ["S1"] or ["S1", "S2"] or null,
+  "confidence": 0.0 to 1.0,
+  "reasoning": "brief explanation of your decision"
+}}
+
+Examples:
+- Query: "How's the weather?" → scope: OUT_OF_SCOPE, validation: null, step_ids: null
+- Query: "What is Python?" → scope: OUT_OF_SCOPE, validation: null, step_ids: null
+- Query: "I raised a JIRA ticket" → scope: IN_SCOPE, validation: VALID, step_ids: ["S1"]
+- Query: "What governance steps exist?" → scope: IN_SCOPE, validation: NO_MATCH, step_ids: null
+"""

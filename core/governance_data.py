@@ -531,9 +531,10 @@ class GovernanceDataLoader:
             # Lexical similarity for exact keyword matches
             lex_score = self.lexical_similarity(text, sid)
 
-            # Final score: balance semantic and lexical (50/50 instead of 75/25)
-            # Lexical is more important for governance-specific terminology
-            final_score = (0.50 * multi_field_score) + (0.50 * lex_score)
+            # Final score: prioritize semantic understanding over keywords (2:1 ratio)
+            # Formula: (2*embedding + lexical)/2 = 67% semantic, 33% lexical
+            # This reduces false positives from random keyword overlap
+            final_score = (2.0 * multi_field_score + lex_score) / 2.0
 
             out.append(
                 {
