@@ -124,6 +124,7 @@ def evaluate_one(
     test_id: str,
     test_type: str,
     prompt: str,
+    expected_step_ids_raw: str,
     expected_step_ids: Expected,
     expected_clarifying_questions: List[str],
     session_id: str,
@@ -181,6 +182,7 @@ def evaluate_one(
         "type": test_type,
         "session_id": session_id,
         "user_prompt": prompt,
+        "expected_step_ids_raw": expected_step_ids_raw,
         "expected": {
             "out_of_process": expected_step_ids.out_of_process,
             "likely": sorted(expected_step_ids.likely),
@@ -269,6 +271,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate governance pipeline on test_cases.csv")
     parser.add_argument("--csv", required=True, help="Path to test_cases.csv (can be outside this repo).")
     parser.add_argument("--out", default=None, help="Write full JSON results to this file.")
+    parser.add_argument("--csv-out", default=None, help="Write a flat CSV report to this file.")
+    parser.add_argument("--top-k", type=int, default=10, help="Number of top semantic candidates to include in CSV output.")
     parser.add_argument("--max", type=int, default=None, help="Max number of rows to run.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop on first exception.")
     parser.add_argument(
@@ -317,6 +321,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         test_id=test_id,
                         test_type=test_type,
                         prompt=prompt,
+                        expected_step_ids_raw=expected_raw,
                         expected_step_ids=expected,
                         expected_clarifying_questions=expected_clar,
                         session_id=session_id,
@@ -332,6 +337,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "type": test_type,
                         "session_id": session_id,
                         "user_prompt": prompt,
+                        "expected_step_ids_raw": expected_raw,
                         "expected": {
                             "out_of_process": expected.out_of_process,
                             "likely": sorted(expected.likely),
@@ -349,6 +355,81 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out_path = Path(args.out).expanduser()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps({"summary": summary, "results": results}, indent=2), encoding="utf-8")
+
+    if args.csv_out:
+        csv_out_path = Path(args.csv_out).expanduser()
+        csv_out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        top_k = max(1, int(args.top_k))
+
+        base_fields = [
+            "test_id",
+            "type",
+            "session_id",
+            "user_prompt",
+            "expected_step_ids_raw",
+            "expected_out_of_process",
+            "expected_likely",
+            "expected_possible",
+            "predicted_intent",
+            "predicted_focus_step_id",
+            "predicted_candidate_step_ids",
+            "predicted_referenced_ids",
+            "predicted_next_step_ids",
+            "predicted_predicted_step_ids",
+            "predicted_needs_disambiguation",
+            "error",
+        ]
+
+        cand_fields: List[str] = []
+        for i in range(1, top_k + 1):
+            cand_fields.extend(
+                [
+                    f"top{i}_id",
+                    f"top{i}_score",
+                    f"top{i}_embedding_score",
+                    f"top{i}_lexical_score",
+                ]
+            )
+
+        fieldnames = base_fields + cand_fields
+
+        with csv_out_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for r in results:
+                expected = r.get("expected") or {}
+                predicted = r.get("predicted") or {}
+                row: Dict[str, Any] = {
+                    "test_id": r.get("test_id"),
+                    "type": r.get("type"),
+                    "session_id": r.get("session_id"),
+                    "user_prompt": r.get("user_prompt"),
+                    "expected_step_ids_raw": r.get("expected_step_ids_raw"),
+                    "expected_out_of_process": expected.get("out_of_process"),
+                    "expected_likely": ";".join(expected.get("likely") or []),
+                    "expected_possible": ";".join(expected.get("possible") or []),
+                    "predicted_intent": predicted.get("intent"),
+                    "predicted_focus_step_id": predicted.get("focus_step_id"),
+                    "predicted_candidate_step_ids": ";".join(predicted.get("candidate_step_ids") or []),
+                    "predicted_referenced_ids": ";".join(predicted.get("referenced_ids") or []),
+                    "predicted_next_step_ids": ";".join(predicted.get("next_step_ids") or []),
+                    "predicted_predicted_step_ids": ";".join(predicted.get("predicted_step_ids") or []),
+                    "predicted_needs_disambiguation": predicted.get("needs_disambiguation"),
+                    "error": r.get("error"),
+                }
+
+                top_candidates = predicted.get("top_semantic_candidates") or []
+                for i in range(1, top_k + 1):
+                    idx = i - 1
+                    c = top_candidates[idx] if idx < len(top_candidates) else {}
+                    row[f"top{i}_id"] = c.get("id")
+                    row[f"top{i}_score"] = c.get("score")
+                    row[f"top{i}_embedding_score"] = c.get("embedding_score")
+                    row[f"top{i}_lexical_score"] = c.get("lexical_score")
+
+                writer.writerow(row)
 
     return 0
 
