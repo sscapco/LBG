@@ -70,6 +70,11 @@ class GovernanceDataLoader:
         )
         self.nodes_df["Automation_step"] = self.nodes_df["Automation_step"].astype(str).str.strip()
 
+        # CRITICAL: Filter out invalid/NAN rows from the DataFrame
+        # This prevents NAN step IDs from contaminating all downstream processing
+        valid_mask = (self.nodes_df["Step_ID"] != "NAN") & (self.nodes_df["Step_ID"].notna())
+        self.nodes_df = self.nodes_df[valid_mask].reset_index(drop=True)
+
         self.ordered_step_ids = list(self.nodes_df["Step_ID"])
         self._step_index = {sid: i for i, sid in enumerate(self.ordered_step_ids)}
 
@@ -341,6 +346,10 @@ class GovernanceDataLoader:
         return self._step_index.get(step_id, 10_000)
 
     def get_step_record(self, step_id: str) -> Optional[Dict]:
+        # Validate step_id before querying
+        if not step_id or step_id == "NAN":
+            return None
+
         row = self.nodes_df[self.nodes_df["Step_ID"] == step_id]
         if row.empty:
             return None
@@ -395,6 +404,12 @@ class GovernanceDataLoader:
 
         for _, row in self.nodes_df.iterrows():
             sid = str(row["Step_ID"]).strip().upper()
+
+            # CRITICAL: Skip invalid/NAN step IDs in substring matching
+            # This was the bug causing Query 2 to match to "NAN"
+            if not sid or sid == "NAN":
+                continue
+
             name = str(row["Step_Name"]).strip()
             name_lower = name.lower()
             name_normalized = self._normalize_text(name)
