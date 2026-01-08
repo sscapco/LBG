@@ -272,6 +272,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--csv", required=True, help="Path to test_cases.csv (can be outside this repo).")
     parser.add_argument("--out", default=None, help="Write full JSON results to this file.")
     parser.add_argument("--csv-out", default=None, help="Write a flat CSV report to this file.")
+    parser.add_argument("--csv-out-long", default=None, help="Write a long-form (one row per candidate) CSV report to this file.")
     parser.add_argument("--top-k", type=int, default=10, help="Number of top semantic candidates to include in CSV output.")
     parser.add_argument("--max", type=int, default=None, help="Max number of rows to run.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop on first exception.")
@@ -430,6 +431,109 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     row[f"top{i}_lexical_score"] = c.get("lexical_score")
 
                 writer.writerow(row)
+
+    if args.csv_out_long:
+        csv_out_path = Path(args.csv_out_long).expanduser()
+        csv_out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        top_k = max(1, int(args.top_k))
+        fieldnames = [
+            "test_id",
+            "type",
+            "session_id",
+            "user_prompt",
+            "expected_step_ids_raw",
+            "expected_out_of_process",
+            "expected_likely",
+            "expected_possible",
+            "predicted_step_ids",
+            "predicted_intent",
+            "predicted_focus_step_id",
+            "predicted_needs_disambiguation",
+            "candidate_rank",
+            "candidate_step_id",
+            "score",
+            "embedding_score",
+            "lexical_score",
+            "is_predicted_step",
+            "is_expected_likely",
+            "is_expected_possible",
+            "error",
+        ]
+
+        with csv_out_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for r in results:
+                expected = r.get("expected") or {}
+                predicted = r.get("predicted") or {}
+
+                predicted_step_ids = predicted.get("predicted_step_ids") or []
+                predicted_set = set(predicted_step_ids)
+                expected_likely = expected.get("likely") or []
+                expected_possible = expected.get("possible") or []
+                expected_likely_set = set(expected_likely)
+                expected_possible_set = set(expected_possible)
+
+                top_candidates = (predicted.get("top_semantic_candidates") or [])[:top_k]
+
+                # If the row errored before candidates were computed, still emit one row.
+                if not top_candidates:
+                    writer.writerow(
+                        {
+                            "test_id": r.get("test_id"),
+                            "type": r.get("type"),
+                            "session_id": r.get("session_id"),
+                            "user_prompt": r.get("user_prompt"),
+                            "expected_step_ids_raw": r.get("expected_step_ids_raw"),
+                            "expected_out_of_process": expected.get("out_of_process"),
+                            "expected_likely": ";".join(expected_likely),
+                            "expected_possible": ";".join(expected_possible),
+                            "predicted_step_ids": ";".join(predicted_step_ids),
+                            "predicted_intent": predicted.get("intent"),
+                            "predicted_focus_step_id": predicted.get("focus_step_id"),
+                            "predicted_needs_disambiguation": predicted.get("needs_disambiguation"),
+                            "candidate_rank": "",
+                            "candidate_step_id": "",
+                            "score": "",
+                            "embedding_score": "",
+                            "lexical_score": "",
+                            "is_predicted_step": "",
+                            "is_expected_likely": "",
+                            "is_expected_possible": "",
+                            "error": r.get("error"),
+                        }
+                    )
+                    continue
+
+                for idx, c in enumerate(top_candidates, start=1):
+                    sid = c.get("id")
+                    writer.writerow(
+                        {
+                            "test_id": r.get("test_id"),
+                            "type": r.get("type"),
+                            "session_id": r.get("session_id"),
+                            "user_prompt": r.get("user_prompt"),
+                            "expected_step_ids_raw": r.get("expected_step_ids_raw"),
+                            "expected_out_of_process": expected.get("out_of_process"),
+                            "expected_likely": ";".join(expected_likely),
+                            "expected_possible": ";".join(expected_possible),
+                            "predicted_step_ids": ";".join(predicted_step_ids),
+                            "predicted_intent": predicted.get("intent"),
+                            "predicted_focus_step_id": predicted.get("focus_step_id"),
+                            "predicted_needs_disambiguation": predicted.get("needs_disambiguation"),
+                            "candidate_rank": idx,
+                            "candidate_step_id": sid,
+                            "score": c.get("score"),
+                            "embedding_score": c.get("embedding_score"),
+                            "lexical_score": c.get("lexical_score"),
+                            "is_predicted_step": bool(sid and sid in predicted_set),
+                            "is_expected_likely": bool(sid and sid in expected_likely_set),
+                            "is_expected_possible": bool(sid and sid in expected_possible_set),
+                            "error": r.get("error"),
+                        }
+                    )
 
     return 0
 
