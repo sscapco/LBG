@@ -532,9 +532,9 @@ class GovernanceDataLoader:
             lex_score = self.lexical_similarity(text, sid)
 
             # Final score: prioritize semantic understanding over keywords (2:1 ratio)
-            # Formula: (2*embedding + lexical)/2 = 67% semantic, 33% lexical
+            # Formula: (2*embedding + lexical)/3 = 67% semantic, 33% lexical
             # This reduces false positives from random keyword overlap
-            final_score = (2.0 * multi_field_score + lex_score) / 2.0
+            final_score = (2.0 * multi_field_score + lex_score) / 3.0
 
             out.append(
                 {

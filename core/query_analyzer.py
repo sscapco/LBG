@@ -229,20 +229,44 @@ def _identify_steps(user_message: str, previous_state: dict = None, intent: str 
         # No candidates meet thresholds = likely out-of-scope or no relevant match
         return None, [], "below_threshold", 0.0
 
-    # Use LLM to validate scope and select best match from valid candidates
-    validated_ids, validation_result, llm_confidence = _llm_validate_scope(user_message, valid_candidates[:3])
+    # Check if we have a clear winner (high score, good gap to next candidate)
+    c1 = valid_candidates[0]
+    if len(valid_candidates) >= 2:
+        c2 = valid_candidates[1]
+        score_gap = c1["score"] - c2["score"]
 
-    if validation_result == "out_of_scope":
-        return None, [], "out_of_scope", llm_confidence
-    elif validation_result == "no_match":
-        return None, [], "no_match_validated", llm_confidence
-    elif validation_result == "ambiguous" and validated_ids:
-        return validated_ids[0], validated_ids, "llm_validated_ambiguous", llm_confidence
-    elif validation_result == "valid" and validated_ids:
-        return validated_ids[0], validated_ids, "llm_validated", llm_confidence
+        # Clear winner: high score AND significant gap
+        if c1["score"] >= 0.60 and score_gap >= 0.15:
+            return c1["id"], [c1["id"]], "high_confidence_match", c1["score"]
 
-    # Fallback: if LLM validation fails, return None
-    return None, [], "validation_failed", 0.0
+        # Close scores = ambiguous, need to ask user
+        if c1["score"] >= 0.45 and c2["score"] >= 0.40 and score_gap < 0.10:
+            candidate_ids = [c["id"] for c in valid_candidates[:3]]
+            return c1["id"], candidate_ids, "threshold_ambiguous", c1["score"]
+    else:
+        # Only one valid candidate
+        if c1["score"] >= 0.50:
+            return c1["id"], [c1["id"]], "single_valid_match", c1["score"]
+
+    # Borderline cases (score 0.35-0.60 with no clear winner): use LLM validation
+    if 0.35 <= c1["score"] < 0.60:
+        validated_ids, validation_result, llm_confidence = _llm_validate_scope(user_message, valid_candidates[:3])
+
+        if validation_result == "out_of_scope":
+            return None, [], "out_of_scope", llm_confidence
+        elif validation_result == "no_match":
+            return None, [], "no_match_validated", llm_confidence
+        elif validation_result == "ambiguous" and validated_ids:
+            return validated_ids[0], validated_ids, "llm_validated_ambiguous", llm_confidence
+        elif validation_result == "valid" and validated_ids:
+            return validated_ids[0], validated_ids, "llm_validated", llm_confidence
+
+    # Very low scores even after threshold filtering = no match
+    if c1["score"] < 0.35:
+        return None, [], "low_confidence", 0.0
+
+    # Fallback: return top candidate
+    return c1["id"], [c1["id"]], "threshold_match", c1["score"]
 
 
 def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[Optional[str], List[str]]:
