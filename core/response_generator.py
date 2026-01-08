@@ -36,7 +36,9 @@ def response_generator_node(state: GovernanceState) -> GovernanceState:
     elif intent == "ask_next_step":
         state["answer"] = _generate_next_step_response(state)
     else:
-        state["answer"] = _generate_fallback_response(state)
+        # Generate appropriate fallback based on why matching failed
+        match_method = state.get("match_method", "")
+        state["answer"] = _generate_fallback_response(state, match_method)
 
     return state
 
@@ -162,17 +164,51 @@ def _generate_next_step_response(state: GovernanceState) -> str:
     )
 
 
-def _generate_fallback_response(state: GovernanceState) -> str:
-    prompt = fallback_prompt(state.get("user_message", ""))
-    messages = [{"role": "user", "content": prompt}]
-    return cortex_chat_text(
-        cortex.get_chat_response(
-            messages,
-            max_tokens=300,
-            temperature=0.3,
-            thinking_enabled=False,
+def _generate_fallback_response(state: GovernanceState, match_method: str = "") -> str:
+    """Generate fallback response based on why matching failed."""
+    user_message = state.get("user_message", "")
+
+    # Handle different failure modes with specific messages
+    if match_method == "out_of_scope":
+        return (
+            "I'm a governance workflow assistant focused on helping with specific governance process steps. "
+            "Your question doesn't appear to be related to the governance workflow.\n\n"
+            "I can help you with:\n"
+            "• Understanding specific governance steps and requirements\n"
+            "• Identifying where you are in the process based on completed work\n"
+            "• Learning what comes next in your governance journey\n\n"
+            "Could you rephrase your question in terms of governance steps or activities?"
         )
-    )
+    elif match_method == "below_threshold":
+        return (
+            "I couldn't find a governance step that closely matches your query. "
+            "This might be because:\n"
+            "• The query doesn't match any specific step in our workflow\n"
+            "• You might need to provide more specific details\n\n"
+            "Could you clarify which governance activity or artifact you're asking about? "
+            "For example, mention specific deliverables like JIRA tickets, security assessments, or approvals."
+        )
+    elif match_method in ["no_match_validated", "validation_failed"]:
+        return (
+            "I understand you're asking about the governance workflow, but I couldn't identify "
+            "which specific step you're referring to.\n\n"
+            "To help you better, could you mention:\n"
+            "• What work you've completed (e.g., 'raised a JIRA ticket', 'got security approval')\n"
+            "• Which deliverable or artifact you're asking about\n"
+            "• The stage of the process you're in"
+        )
+    else:
+        # Generic fallback for other cases
+        prompt = fallback_prompt(user_message)
+        messages = [{"role": "user", "content": prompt}]
+        return cortex_chat_text(
+            cortex.get_chat_response(
+                messages,
+                max_tokens=300,
+                temperature=0.3,
+                thinking_enabled=False,
+            )
+        )
 
 
 def _generate_comparison_response(state: GovernanceState, step_ids: List[str]) -> str:
