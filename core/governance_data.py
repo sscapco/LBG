@@ -104,28 +104,42 @@ class GovernanceDataLoader:
         for _, row in self.nodes_df.iterrows():
             sid = str(row["Step_ID"]).strip().upper()
 
+            # Skip invalid step IDs
+            if not sid or sid == "NAN":
+                continue
+
             # Separate text components for targeted matching
             step_name = str(row["Step_Name"]).strip()
             purpose = str(row["Purpose"]).strip()
             description = str(row["Description"]).strip()
             stage = str(row["Stage_Name"]).strip()
 
+            # Helper to check if value is valid (not nan/empty)
+            def is_valid(val):
+                return val and val.lower() != "nan" and len(val) > 0
+
+            # Use valid values or fallbacks
+            step_name = step_name if is_valid(step_name) else f"Step {sid}"
+            purpose = purpose if is_valid(purpose) else step_name
+            description = description if is_valid(description) else purpose
+            stage = stage if is_valid(stage) else ""
+
             # Create three separate embeddings for name, purpose, and description
             name_text = f"Step {sid}: {step_name}"
-            purpose_text = f"{purpose}" if purpose and purpose != "nan" else step_name
+            purpose_text = purpose
 
             # For description, include key details but keep it focused
-            desc_text = description if description and description != "nan" else purpose_text
+            desc_text = description
 
             # Combined text for backward compatibility and general matching
             text_parts = [f"Step {sid}", step_name]
-            if purpose and purpose != "nan":
+            if is_valid(purpose):
                 text_parts.append(f"Purpose: {purpose}")
-            if description and description != "nan":
+            if is_valid(description):
                 text_parts.append(description)
-            if stage and stage != "nan":
+            if is_valid(stage):
                 text_parts.append(f"Stage: {stage}")
-            combined_text = " | ".join([p for p in text_parts if p])
+            combined_text = " | ".join([p for p in text_parts if p and p.lower() != "nan"])
 
             # Generate embeddings
             name_emb = cortex.get_embedding(name_text)
@@ -219,23 +233,29 @@ class GovernanceDataLoader:
         return t
 
     def _build_step_text(self, sid: str, row: pd.Series) -> str:
+        def is_valid(val):
+            return val and val.lower() != "nan" and len(val) > 0
+
         text_parts: List[str] = []
         text_parts.append(f"Step {sid}")
-        text_parts.append(str(row.get("Step_Name", "")))
+
+        step_name = str(row.get("Step_Name", ""))
+        if is_valid(step_name):
+            text_parts.append(step_name)
 
         purpose = str(row.get("Purpose", ""))
-        if purpose and purpose != "nan":
+        if is_valid(purpose):
             text_parts.append(f"Purpose: {purpose}")
 
         description = str(row.get("Description", ""))
-        if description and description != "nan":
+        if is_valid(description):
             text_parts.append(description)
 
         stage = str(row.get("Stage_Name", ""))
-        if stage and stage != "nan":
+        if is_valid(stage):
             text_parts.append(f"Stage: {stage}")
 
-        return " | ".join([p for p in text_parts if p])
+        return " | ".join([p for p in text_parts if p and p.lower() != "nan"])
 
     def _build_lexical_index(self) -> None:
         doc_tokens: Dict[str, set[str]] = {}
@@ -243,6 +263,11 @@ class GovernanceDataLoader:
 
         for _, row in self.nodes_df.iterrows():
             sid = str(row["Step_ID"]).strip().upper()
+
+            # Skip invalid step IDs
+            if not sid or sid == "NAN":
+                continue
+
             text = self._build_step_text(sid, row)
             toks = set(self._tokenize(text))
             doc_tokens[sid] = toks
@@ -291,15 +316,19 @@ class GovernanceDataLoader:
             name = str(row["Step_Name"]).strip()
             aliases = set()
 
-            if sid:
-                aliases.add(sid.lower())
+            # Skip if step ID is invalid
+            if not sid or sid == "NAN":
+                continue
 
-            if name:
+            aliases.add(sid.lower())
+
+            # Only add name if it's valid (not nan/empty)
+            if name and name.lower() != "nan" and len(name) > 0:
                 aliases.add(name.lower())
 
                 for match in re.findall(r"\(([^)]+)\)", name):
                     alias = match.strip()
-                    if alias:
+                    if alias and alias.lower() != "nan":
                         aliases.add(alias.lower())
 
                 caps = "".join(ch for ch in name if ch.isupper())
