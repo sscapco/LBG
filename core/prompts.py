@@ -193,27 +193,42 @@ IMPORTANT:
 
 def validate_scope_prompt(user_message: str, candidates: List[Dict[str, Any]]) -> str:
     """Prompt for LLM to validate if query is in-scope and which candidates match."""
+
+    # Prepare candidate info WITHOUT numeric scores to avoid biasing LLM with thresholds
+    candidate_info = []
+    for c in candidates:
+        candidate_info.append({
+            "id": c["id"],
+            "name": c["name"],
+            "purpose": c["purpose"],
+            "description": c["description"]
+        })
+
     return f"""You are validating whether a user query relates to a governance workflow.
 
 User query: "{user_message}"
 
-Top candidate steps from semantic matching:
-{json.dumps(candidates, indent=2)}
+Candidate governance steps (pre-filtered for relevance):
+{json.dumps(candidate_info, indent=2)}
 
 Your task:
-1. **Scope Check**: Determine if this query is about the governance workflow at all
-   - IN_SCOPE: Query asks about governance steps, processes, requirements, or describes work done
-   - OUT_OF_SCOPE: Query is unrelated (greetings, weather, general questions, off-topic)
+1. **Scope Check**: Is this query about governance processes?
+   - IN_SCOPE: Query mentions governance activities, deliverables, approvals, assessments, or asks about workflow steps
+   - OUT_OF_SCOPE: Query is completely unrelated (weather, general tech questions, greetings, off-topic chitchat)
 
-2. **If IN_SCOPE**: Determine which step(s) best match
-   - Check if the query describes activities, artifacts, or milestones mentioned in step purposes/descriptions
-   - Return step ID(s) if there's a clear match
-   - Return AMBIGUOUS if multiple steps apply equally
-   - Return NO_MATCH if query is in-scope but doesn't match any specific step well
+2. **If IN_SCOPE**: Which step(s) match the query?
+   - Look for specific artifacts or activities (e.g., "JIRA ticket", "Threat Model", "SIR rating", "security assessment")
+   - Match user's described work to step purposes (e.g., "raised a ticket" matches ticket creation step)
+   - Return VALID with step ID(s) if the query reasonably relates to one or more steps
+   - Return AMBIGUOUS if 2-3 steps genuinely apply and user needs to clarify
+   - Return NO_MATCH only if it's governance-related but doesn't fit any provided step
 
-3. **Be CONSERVATIVE**:
-   - If semantic similarity seems weak or coincidental, return OUT_OF_SCOPE or NO_MATCH
-   - Only return VALID with step IDs if you're confident (>0.7) there's a real match
+3. **Guidelines**:
+   - These candidates passed strict relevance filters - trust they're potentially relevant
+   - Focus on matching content/intent, not perfect wording
+   - Governance queries are often informal or vague - that's OK if the intent is clear
+   - Use OUT_OF_SCOPE only for truly unrelated topics (not just unclear governance queries)
+   - When in doubt between steps, return AMBIGUOUS with multiple IDs
 
 Respond with ONLY a JSON object:
 {{
@@ -221,12 +236,12 @@ Respond with ONLY a JSON object:
   "validation": "VALID" | "NO_MATCH" | "AMBIGUOUS",
   "step_ids": ["S1"] or ["S1", "S2"] or null,
   "confidence": 0.0 to 1.0,
-  "reasoning": "brief explanation of your decision"
+  "reasoning": "brief explanation"
 }}
 
 Examples:
-- Query: "How's the weather?" → scope: OUT_OF_SCOPE, validation: null, step_ids: null
-- Query: "What is Python?" → scope: OUT_OF_SCOPE, validation: null, step_ids: null
-- Query: "I raised a JIRA ticket" → scope: IN_SCOPE, validation: VALID, step_ids: ["S1"]
-- Query: "What governance steps exist?" → scope: IN_SCOPE, validation: NO_MATCH, step_ids: null
+- "How's the weather?" → {{"scope": "OUT_OF_SCOPE", "validation": null, "step_ids": null}}
+- "What is Python?" → {{"scope": "OUT_OF_SCOPE", "validation": null, "step_ids": null}}
+- "I raised a JIRA ticket" → {{"scope": "IN_SCOPE", "validation": "VALID", "step_ids": ["S1"]}}
+- "Tell me about governance steps" → {{"scope": "IN_SCOPE", "validation": "AMBIGUOUS", "step_ids": ["S1", "S2", "S3"]}}
 """
