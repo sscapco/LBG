@@ -328,6 +328,113 @@ def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) 
     return None, []
 
 
+def _llm_validate_single_candidate(user_message: str, candidate: Dict[str, Any]) -> Tuple[bool, float]:
+    """
+    Validate a single candidate against the user query.
+
+    Returns:
+        (is_match, confidence) - True if candidate matches, False otherwise
+    """
+    from core.prompts import validate_scope_prompt
+
+    # Create a list with single candidate for prompt
+    candidates_list = [candidate]
+    prompt = validate_scope_prompt(user_message, candidates_list)
+    messages = [{"role": "user", "content": prompt}]
+
+    try:
+        response = cortex_chat_text(
+            cortex.get_chat_response(
+                messages,
+                max_tokens=800,  # Smaller for single candidate
+                temperature=0.0,
+                thinking_enabled=False,
+            )
+        )
+
+        data = parse_json_object(response, {"scope": str, "validation": str, "confidence": (int, float)})
+        if data:
+            scope = data.get("scope", "").upper()
+            validation = data.get("validation", "").upper()
+            confidence = float(data.get("confidence", 0.0))
+            step_ids = data.get("step_ids") or []
+
+            # Normalize step IDs
+            step_ids = [str(sid).strip().upper() for sid in step_ids if sid]
+
+            # Check if this candidate was validated
+            if scope == "IN_SCOPE" and validation in ["VALID", "AMBIGUOUS"] and candidate["id"] in step_ids:
+                return True, confidence
+
+        return False, 0.0
+
+    except Exception:
+        return False, 0.0
+
+
+def _llm_validate_scope_batched(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[List[str], str, float]:
+    """
+    Validate candidates one at a time when descriptions are very long.
+    Prevents overwhelming LLM with too much text.
+
+    Returns:
+        (step_ids, validation_result, confidence)
+    """
+    governance_data = get_governance_data()
+
+    # Strip out scores before validation
+    candidate_info = []
+    for c in candidates:
+        candidate_info.append({
+            "id": c["id"],
+            "name": c["name"],
+            "purpose": c["purpose"],
+            "description": c["description"]
+        })
+
+    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+        print(f"\n{'='*80}")
+        print(f"DEBUG: LLM BATCHED SCOPE VALIDATION")
+        print(f"{'='*80}")
+        print(f"Query: {user_message}")
+        print(f"Validating {len(candidate_info)} candidates one at a time")
+
+    # Validate each candidate individually
+    matches = []
+    for cand in candidate_info:
+        is_match, conf = _llm_validate_single_candidate(user_message, cand)
+        if is_match:
+            matches.append((cand["id"], conf))
+            if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                print(f"  ✓ {cand['id']}: {cand['name']} (confidence={conf:.2f})")
+        else:
+            if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                print(f"  ✗ {cand['id']}: {cand['name']}")
+
+    # Aggregate results
+    if not matches:
+        # No candidates matched - check if query is in-scope at all
+        # Do a final check with all candidates to determine out_of_scope vs no_match
+        # (This is fast since we're just checking scope, not details)
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"→ BATCHED RESULT: NO_MATCH (no candidates validated)")
+        return [], "no_match", 0.0
+
+    elif len(matches) == 1:
+        step_id, conf = matches[0]
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"→ BATCHED RESULT: VALID (confidence={conf:.2f}, step_ids=['{step_id}'])")
+        return [step_id], "valid", conf
+
+    else:
+        # Multiple matches
+        step_ids = [m[0] for m in matches]
+        avg_conf = sum(m[1] for m in matches) / len(matches)
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"→ BATCHED RESULT: AMBIGUOUS (confidence={avg_conf:.2f}, step_ids={step_ids})")
+        return step_ids, "ambiguous", avg_conf
+
+
 def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[List[str], str, float]:
     """
     Use LLM to validate if query is in-scope and select best matching step(s).
@@ -342,6 +449,7 @@ def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> 
 
     # Prepare candidate details for LLM with full context
     candidate_details = []
+    total_desc_length = 0
     for c in candidates:
         step_record = governance_data.get_step_record(c["id"])
         if step_record:
@@ -354,9 +462,20 @@ def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> 
                 "lexical_score": c.get("lexical_score", 0.0),
                 "overall_score": c.get("score", 0.0),
             })
+            total_desc_length += len(step_record["description"])
 
     if not candidate_details:
         return [], "no_match", 0.0
+
+    # Check if descriptions are very long (might overwhelm LLM)
+    # If average description > 800 chars (~600-1000 tokens), validate one at a time
+    # This prevents overwhelming LLM with 3 × 1000+ token descriptions = 3000+ tokens
+    avg_desc_length = total_desc_length / len(candidate_details)
+    if avg_desc_length > 800:
+        # Use batched validation (one candidate at a time)
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"Descriptions are long (avg: {avg_desc_length:.0f} chars) - using batched validation")
+        return _llm_validate_scope_batched(user_message, candidate_details)
 
     from core.prompts import validate_scope_prompt
     prompt = validate_scope_prompt(user_message, candidate_details)
