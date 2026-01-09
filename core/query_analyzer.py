@@ -286,7 +286,7 @@ def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) 
                 "id": step_record["id"],
                 "name": step_record["name"],
                 "purpose": step_record["purpose"],
-                "description": step_record["description"][:500],  # Truncate long descriptions
+                "description": step_record["description"],  # Full description
                 "initial_score": c["score"],
             })
 
