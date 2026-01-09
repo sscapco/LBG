@@ -80,7 +80,7 @@ def _generate_disambiguation_response(state: GovernanceState) -> str:
     return cortex_chat_text(
         cortex.get_chat_response(
             messages,
-            max_tokens=2000,
+            max_tokens=2500,  # Increased for detailed candidate comparisons
             temperature=0.0,
             thinking_enabled=False,
         )
@@ -129,7 +129,7 @@ To use it, simply ask me to run it. For example:
     return cortex_chat_text(
         cortex.get_chat_response(
             messages,
-            max_tokens=1500,
+            max_tokens=2500,  # Increased for detailed step explanations
             temperature=0.0,
             thinking_enabled=False,
         )
@@ -157,7 +157,7 @@ def _generate_next_step_response(state: GovernanceState) -> str:
     return cortex_chat_text(
         cortex.get_chat_response(
             messages,
-            max_tokens=1000,
+            max_tokens=1500,  # Increased for comprehensive next step guidance
             temperature=0.0,
             thinking_enabled=False,
         )
@@ -204,7 +204,7 @@ def _generate_fallback_response(state: GovernanceState, match_method: str = "") 
         return cortex_chat_text(
             cortex.get_chat_response(
                 messages,
-                max_tokens=300,
+                max_tokens=800,  # Increased for Gemini-2.5-Flash to avoid cutoff
                 temperature=0.3,
                 thinking_enabled=False,
             )
@@ -236,7 +236,7 @@ def _generate_comparison_response(state: GovernanceState, step_ids: List[str]) -
     return cortex_chat_text(
         cortex.get_chat_response(
             messages,
-            max_tokens=1200,
+            max_tokens=2000,  # Increased for detailed step comparisons
             temperature=0.0,
             thinking_enabled=False,
         )

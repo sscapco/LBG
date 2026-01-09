@@ -296,7 +296,7 @@ def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) 
         response = cortex_chat_text(
             cortex.get_chat_response(
                 messages,
-                max_tokens=300,
+                max_tokens=800,  # Increased for detailed reranking explanations
                 temperature=0.0,
                 thinking_enabled=False,
             )
@@ -345,7 +345,7 @@ def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> 
                 "id": step_record["id"],
                 "name": step_record["name"],
                 "purpose": step_record["purpose"],
-                "description": step_record["description"][:600],  # Include more context
+                "description": step_record["description"],  # Full description, no truncation
                 "embedding_score": c.get("embedding_score", 0.0),
                 "lexical_score": c.get("lexical_score", 0.0),
                 "overall_score": c.get("score", 0.0),
@@ -358,15 +358,30 @@ def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> 
     prompt = validate_scope_prompt(user_message, candidate_details)
     messages = [{"role": "user", "content": prompt}]
 
+    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+        print(f"\n{'='*80}")
+        print(f"DEBUG: LLM SCOPE VALIDATION")
+        print(f"{'='*80}")
+        print(f"Query: {user_message}")
+        print(f"Candidates passed to LLM: {len(candidate_details)}")
+        for cd in candidate_details:
+            print(f"  - {cd['id']}: {cd['name']} (score={cd['overall_score']:.3f}, emb={cd['embedding_score']:.3f}, lex={cd['lexical_score']:.3f})")
+        print(f"Prompt length: {len(prompt)} chars")
+
     try:
         response = cortex_chat_text(
             cortex.get_chat_response(
                 messages,
-                max_tokens=400,
+                max_tokens=1500,  # Increased for Gemini-2.5-Flash to handle full responses
                 temperature=0.0,
                 thinking_enabled=False,
             )
         )
+
+        if os.getenv("GOV_DEBUG_MATCHING") == "1":
+            print(f"\nLLM Raw Response:")
+            print(f"{response}")
+            print(f"Response length: {len(response)} chars")
 
         data = parse_json_object(response, {"scope": str, "validation": str, "confidence": (int, float)})
         if data:
@@ -380,23 +395,41 @@ def _llm_validate_scope(user_message: str, candidates: List[Dict[str, Any]]) -> 
 
             # Map LLM response to our validation result
             if scope == "OUT_OF_SCOPE":
+                if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                    print(f"→ RESULT: OUT_OF_SCOPE (confidence={confidence:.2f})")
                 return [], "out_of_scope", confidence
             elif validation == "NO_MATCH":
+                if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                    print(f"→ RESULT: NO_MATCH (confidence={confidence:.2f})")
                 return [], "no_match", confidence
             elif validation == "AMBIGUOUS" and step_ids:
+                if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                    print(f"→ RESULT: AMBIGUOUS (confidence={confidence:.2f}, step_ids={step_ids})")
                 return step_ids, "ambiguous", confidence
             elif validation == "VALID" and step_ids:
                 # Verify step IDs are from candidates
                 valid_ids = [sid for sid in step_ids if any(c["id"] == sid for c in candidate_details)]
                 if valid_ids:
+                    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                        print(f"→ RESULT: VALID (confidence={confidence:.2f}, step_ids={valid_ids})")
                     return valid_ids, "valid", confidence
+                else:
+                    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                        print(f"→ WARNING: LLM returned step_ids {step_ids} not in candidates")
+            else:
+                if os.getenv("GOV_DEBUG_MATCHING") == "1":
+                    print(f"→ WARNING: Unexpected LLM response - scope={scope}, validation={validation}, step_ids={step_ids}")
 
     except Exception as e:
         # Log error but don't fail the pipeline
         if os.getenv("GOV_DEBUG_MATCHING") == "1":
-            print(f"DEBUG: LLM validation failed: {e}")
+            print(f"→ ERROR: LLM validation failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Fallback: treat as no match if LLM fails
+    if os.getenv("GOV_DEBUG_MATCHING") == "1":
+        print(f"→ FALLBACK: Returning no_match due to LLM failure or parse error")
     return [], "no_match", 0.0
 
 
