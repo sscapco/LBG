@@ -70,24 +70,18 @@ def _first_json(text: str):
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        print(f"DEBUG: Direct JSON parse failed: {e}")
-        print(f"DEBUG: Attempting regex extraction...")
+        
         try:
             m = re.search(r'\{.*\}', text, flags=re.DOTALL)
             if m:
                 extracted = m.group(0)
-                print(f"DEBUG: Extracted JSON length: {len(extracted)} chars")
-                print(f"DEBUG: Extracted JSON (first 300 chars): {extracted[:300]}")
+                
                 return json.loads(extracted)
             else:
-                print("DEBUG: No JSON object found in text")
                 return None
         except json.JSONDecodeError as e2:
-            print(f"DEBUG: Regex-extracted JSON also failed: {e2}")
-            print(f"DEBUG: Extracted text: {extracted[:500] if 'extracted' in locals() else 'N/A'}")
             return None
     except Exception as e:
-        print(f"DEBUG: Unexpected error in _first_json: {e}")
         return None
 
 def _camel_split(s: str) -> list[str]:
@@ -359,19 +353,9 @@ def _run_llm_with_prompt(prompt_text: str) -> Dict[str, Any]:
     settings = Settings()
     llm = get_llm(settings)
     raw = llm.generate(prompt_text, temperature=0.0, max_tokens=1500)
-    
-    print(f"\nDEBUG: Raw LLM response length: {len(raw)} chars")
-    print(f"DEBUG: Raw LLM response (first 500 chars):\n{raw[:500]}")
-    print(f"DEBUG: Raw LLM response (last 200 chars):\n{raw[-200:]}")
-    
+  
     result = _first_json(raw)
-    
-    if result is None:
-        print("DEBUG: _first_json returned None - could not extract valid JSON")
-        print(f"DEBUG: Full raw response:\n{raw}")
-    else:
-        print("DEBUG: Successfully extracted JSON from LLM response")
-    
+       
     return result or {}
 
 def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
@@ -379,7 +363,6 @@ def _guard_llm_suggestion(name: str, payload: Dict[str, Any], data: Dict[str, An
     token_types = payload["token_types"]
 
     suggested = data.get("suggested_name", name)
-    print(f"\nDEBUG _guard_llm_suggestion:")
     print(f"  Input name: {name}")
     print(f"  LLM suggested_name: {suggested}")
     

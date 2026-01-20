@@ -3,3 +3,5 @@ graveyard/
 .venv/
 .venv
 openai_version/
+DEPLOYMENT_GUIDE.md
+

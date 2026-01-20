@@ -120,11 +120,6 @@ def run_automation_step(automation_step: str, user_input: Optional[str] = None) 
         return {"status": "error", "message": f"Automation execution failed: {str(e)}"}
 
 
-def list_available_automations() -> Dict[str, Dict[str, str]]:
-    return {
-        step: {"description": info["description"], "display_name": info["display_name"], "category": info["category"]}
-        for step, info in AUTOMATION_REGISTRY.items()
-    }
 
 
 def format_automation_result_for_user(result: Dict[str, Any]) -> str:

@@ -297,7 +297,6 @@ class GovernanceDataLoader:
         if not doc:
             return 0.0
 
-        # Increase from 6 to 20 tokens to handle complex governance queries
         # These queries often have many domain-specific terms that are all important
         ranked = sorted(q_toks, key=lambda t: self._idf.get(t, 1.0), reverse=True)
         top = ranked[: min(20, len(ranked))]
@@ -405,8 +404,7 @@ class GovernanceDataLoader:
         for _, row in self.nodes_df.iterrows():
             sid = str(row["Step_ID"]).strip().upper()
 
-            # CRITICAL: Skip invalid/NAN step IDs in substring matching
-            # This was the bug causing Query 2 to match to "NAN"
+            # Skip invalid/NAN step IDs in substring matching
             if not sid or sid == "NAN":
                 continue
 
@@ -450,16 +448,6 @@ class GovernanceDataLoader:
 
         return None, "no_match", 0.0
 
-    def map_text_to_step_id(self, text: str, emb_threshold: float = 0.5) -> Tuple[Optional[str], str, float]:
-        sid, method, confidence = self.deterministic_match(text)
-        if sid:
-            return sid, method, confidence
-
-        best_emb_sid, best_emb_score = self.best_step_by_embedding(text)
-        if best_emb_sid and best_emb_score >= emb_threshold:
-            return best_emb_sid, "embedding_match", best_emb_score
-
-        return None, "no_match", 0.0
 
     def best_step_by_embedding(self, text: str) -> Tuple[Optional[str], float]:
         candidates = self.semantic_candidates(text, top_k=1)

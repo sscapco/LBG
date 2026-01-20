@@ -273,59 +273,6 @@ def _identify_steps(user_message: str, previous_state: dict = None, intent: str 
     return c1["id"], [c1["id"]], "threshold_match", c1["score"]
 
 
-def _llm_rerank_candidates(user_message: str, candidates: List[Dict[str, Any]]) -> Tuple[Optional[str], List[str]]:
-    """Use LLM to intelligently rerank candidates by understanding context."""
-    governance_data = get_governance_data()
-
-    # Prepare candidate details for LLM
-    candidate_details = []
-    for c in candidates:
-        step_record = governance_data.get_step_record(c["id"])
-        if step_record:
-            candidate_details.append({
-                "id": step_record["id"],
-                "name": step_record["name"],
-                "purpose": step_record["purpose"],
-                "description": step_record["description"],  # Full description
-                "initial_score": c["score"],
-            })
-
-    if not candidate_details:
-        return None, []
-
-    prompt = rerank_candidates_prompt(user_message, candidate_details)
-    messages = [{"role": "user", "content": prompt}]
-
-    try:
-        response = cortex_chat_text(
-            cortex.get_chat_response(
-                messages,
-                max_tokens=800,  # Increased for detailed reranking explanations
-                temperature=0.0,
-                thinking_enabled=False,
-            )
-        )
-
-        data = parse_json_object(response, {"best_match": str, "confidence": (int, float)})
-        if data:
-            best_match = data.get("best_match", "").strip().upper()
-            confidence = float(data.get("confidence", 0.0))
-            ambiguous = data.get("ambiguous_candidates")
-
-            # Only trust high-confidence LLM decisions
-            if confidence >= 0.65:
-                if best_match == "AMBIGUOUS" and isinstance(ambiguous, list) and ambiguous:
-                    return "AMBIGUOUS", [s.strip().upper() for s in ambiguous if s]
-                elif best_match and best_match != "AMBIGUOUS":
-                    # Verify it's one of the candidates
-                    if any(c["id"] == best_match for c in candidate_details):
-                        return best_match, []
-
-    except Exception:
-        pass
-
-    # Fallback: return None to use original ranking
-    return None, []
 
 
 def _llm_validate_single_candidate(user_message: str, candidate: Dict[str, Any]) -> Tuple[bool, float]:
